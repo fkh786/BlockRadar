@@ -1,0 +1,25 @@
+# ---- never commit: your keys, tokens and trading data ----
+data/*
+!data/.keep
+settings.json
+*.db
+*.db-journal
+.env
+.env.*
+
+# ---- broker instrument caches (re-downloaded daily) ----
+*_20[0-9][0-9][0-1][0-9][0-3][0-9]*
+instruments_*.json.gz
+
+# ---- Python / tooling ----
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.zip

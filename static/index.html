@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BlockRadar</title>
+<meta name="theme-color" content="#0a0d12">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0d12'/%3E%3Crect x='7' y='9' width='18' height='6' rx='1.5' fill='%2322c55e' opacity='.85'/%3E%3Crect x='7' y='18' width='18' height='6' rx='1.5' fill='%23ef4444' opacity='.85'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#board">
+    <span class="logo"><i></i><i></i></span>
+    <span>Block<b>Radar</b></span>
+  </a>
+  <nav class="tabs" id="tabs">
+    <a href="#board" data-view="board">Board</a>
+    <a href="#chart" data-view="chart">Charts</a>
+    <a href="#xray" data-view="xray">X-Ray</a>
+    <a href="#paper" data-view="paper">Paper</a>
+    <a href="#journal" data-view="journal">Journal</a>
+    <a href="#settings" data-view="settings" class="gear" title="Settings">Settings</a>
+  </nav>
+  <div class="status" id="status">
+    <span class="dot"></span><span id="status-text">Starting…</span>
+  </div>
+  <div class="bell-wrap">
+    <button class="bell" id="bell" title="Alerts" aria-label="Alerts">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <span class="badge" id="bell-badge" hidden>0</span>
+    </button>
+    <div class="alert-panel" id="alert-panel" hidden>
+      <div class="ap-head"><b>Alerts</b><button class="btn sm ghost" id="alert-clear">Mark read</button></div>
+      <div class="ap-list" id="alert-list"><p class="hint">No alerts yet.</p></div>
+    </div>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<main>
+  <!-- ============ BOARD ============ -->
+  <section class="view" id="view-board">
+    <div class="idx-strip" id="idx-strip"></div>
+    <div class="board-head">
+      <div class="counts" id="counts"></div>
+      <div class="board-tools">
+        <select id="sector-filter" aria-label="Filter by sector"><option value="">All sectors</option></select>
+        <div class="seg mobile-only" id="side-toggle">
+          <button data-side="bullish" class="on">Bullish</button>
+          <button data-side="bearish">Bearish</button>
+        </div>
+      </div>
+    </div>
+    <div class="board" id="board">
+      <div class="col bull" data-side="bullish">
+        <h2><span class="tri up"></span>Strongest bullish</h2>
+        <ol class="rows" id="rows-bullish"></ol>
+      </div>
+      <div class="col bear" data-side="bearish">
+        <h2><span class="tri down"></span>Strongest bearish</h2>
+        <ol class="rows" id="rows-bearish"></ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CHART ============ -->
+  <section class="view" id="view-chart" hidden>
+    <aside class="picker">
+      <input id="sym-search" placeholder="Search symbol…" autocomplete="off" spellcheck="false">
+      <div class="pick-list" id="pick-list"></div>
+    </aside>
+    <div class="chart-main">
+      <div class="chart-head">
+        <div>
+          <h1 id="c-sym">—</h1>
+          <div class="sub" id="c-sub"></div>
+        </div>
+        <div class="chart-tools">
+          <div class="seg" id="tf-toggle">
+            <button data-tf="5" class="on">5m</button><button data-tf="15">15m</button><button data-tf="60">1h</button>
+          </div>
+          <div class="seg" id="sess-toggle">
+            <button data-s="1">1D</button><button data-s="2" class="on">2D</button><button data-s="5">5D</button>
+          </div>
+        </div>
+      </div>
+      <div class="chart-wrap"><div id="chart"></div><div class="legend" id="legend"></div></div>
+      <div class="panel opt-panel" id="opt-panel"></div>
+    </div>
+    <aside class="zone-card" id="zone-card"></aside>
+  </section>
+
+  <!-- ============ X-RAY ============ -->
+  <section class="view" id="view-xray" hidden>
+    <div class="xr-top" id="xr-top"></div>
+    <div class="xr-grid">
+      <div class="panel">
+        <div class="panel-h"><h2>Every F&amp;O stock</h2><span class="hint">Right = up today · Up = stronger bullish setup · Down = stronger bearish</span></div>
+        <div id="scatter" class="scatter"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-h"><h2>Sectors</h2><span class="hint">Average move today</span></div>
+        <div id="sectors"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PAPER ============ -->
+  <section class="view" id="view-paper" hidden>
+    <div class="tiles" id="p-stats"></div>
+    <div class="panel">
+      <div class="panel-h"><h2>Open &amp; pending</h2><span class="hint" id="p-eod"></span></div>
+      <div class="table-wrap"><table class="trades" id="p-open"></table></div>
+    </div>
+    <div class="p-grid">
+      <div class="panel">
+        <div class="panel-h"><h2>Closed</h2><span class="hint" id="p-count"></span></div>
+        <div class="table-wrap"><table class="trades" id="p-closed"></table></div>
+      </div>
+      <div class="panel">
+        <div class="panel-h"><h2>Equity curve</h2><span class="hint">Running realised P&amp;L</span></div>
+        <div id="p-curve" class="curve"></div>
+        <div id="p-exits"></div>
+      </div>
+    </div>
+    <p class="muted small">Paper trades fill at the live price (or when price comes back to your zone for limit orders). Stops and targets trigger on the stock/index level. Option trades exit at the option's price at that moment. Real fills will differ (slippage, spreads, brokerage).</p>
+  </section>
+
+  <!-- ============ JOURNAL ============ -->
+  <section class="view" id="view-journal" hidden>
+    <div class="tiles" id="j-stats"></div>
+    <div class="j-grid">
+      <form class="panel j-form" id="j-form" autocomplete="off">
+        <div class="panel-h"><h2 id="j-form-title">Log a trade</h2></div>
+        <input type="hidden" name="id">
+        <div class="f-row">
+          <label>Date<input type="date" name="trade_date" required></label>
+          <label>Symbol<input name="symbol" required placeholder="SBIN" list="sym-options"></label>
+        </div>
+        <div class="f-row">
+          <label>Side<select name="side"><option>LONG</option><option>SHORT</option></select></label>
+          <label>Qty<input type="number" step="any" name="qty" value="1" min="0"></label>
+        </div>
+        <div class="f-row three">
+          <label>Entry<input type="number" step="any" name="entry" required></label>
+          <label>Stop<input type="number" step="any" name="stop"></label>
+          <label>Target<input type="number" step="any" name="target"></label>
+        </div>
+        <div class="f-row">
+          <label>Exit <small>(blank = open)</small><input type="number" step="any" name="exit"></label>
+          <label>Setup
+            <select name="setup">
+              <option>OB retest</option><option>Liquidity sweep</option><option>Break of structure</option>
+              <option>VWAP reclaim</option><option>Other</option>
+            </select>
+          </label>
+        </div>
+        <label>Notes<textarea name="notes" rows="3" placeholder="Why I took it, what I'd do differently…"></textarea></label>
+        <div class="f-actions">
+          <button type="submit" class="btn primary" id="j-submit">Save trade</button>
+          <button type="button" class="btn ghost" id="j-cancel" hidden>Cancel edit</button>
+        </div>
+        <datalist id="sym-options"></datalist>
+      </form>
+      <div class="panel">
+        <div class="panel-h"><h2>Trades</h2><span class="hint" id="j-count"></span></div>
+        <div class="table-wrap"><table class="trades" id="j-table"></table></div>
+        <div class="panel-h small"><h2>By setup</h2></div>
+        <div id="j-setups"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section class="view" id="view-settings" hidden>
+    <div class="settings">
+      <div class="panel">
+        <div class="panel-h"><h2>Data source</h2><span class="pill" id="src-pill"></span></div>
+        <div class="broker-grid" id="broker-grid"></div>
+        <div id="broker-form"></div>
+        <p class="muted small">Keys and tokens are stored only on this computer, in <code>data/settings.json</code>.</p>
+      </div>
+      <form class="panel" id="al-form" autocomplete="off">
+        <div class="panel-h"><h2>Alerts</h2><button type="button" class="btn sm" id="al-test">Send test alert</button></div>
+        <div class="checks">
+          <label><input type="checkbox" name="zone"> Price enters a trade zone</label>
+          <label><input type="checkbox" name="trap"> Liquidity trap fires</label>
+          <label><input type="checkbox" name="top"> Stock enters the top 5</label>
+          <label><input type="checkbox" name="paper"> Paper trade fills / stop / target</label>
+        </div>
+        <div class="f-row">
+          <label>Minimum strength<input type="number" name="min_score" min="0" max="100"></label>
+          <label>Repeat gap (minutes)<input type="number" name="cooldown_min" min="0" max="240"></label>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" id="al-sound"> Play a sound (this browser)</label>
+          <label><input type="checkbox" id="al-desktop"> Desktop pop-up (this browser)</label>
+        </div>
+        <details class="tg">
+          <summary>Telegram alerts (optional)</summary>
+          <label>Bot token<input name="telegram_token" spellcheck="false" placeholder="from @BotFather"></label>
+          <label>Chat ID<input name="telegram_chat" spellcheck="false" placeholder="your numeric chat id"></label>
+          <p class="muted small">Create a bot with @BotFather, send it any message, then get your chat ID from @userinfobot. <span id="tg-status"></span></p>
+        </details>
+        <div class="checks">
+          <label><input type="checkbox" name="paper_eod"> Square off paper trades at 15:20</label>
+        </div>
+        <div class="f-actions"><button class="btn primary" type="submit">Save alert settings</button></div>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  Personal analytics tool. Order blocks and liquidity levels are price-action models built from candles, not real institutional order data. Not investment advice. F&amp;O trading carries a high risk of loss.
+</footer>
+
+<div class="picker-overlay" id="picker" hidden>
+  <div class="picker-box">
+    <div class="brand big"><span class="logo"><i></i><i></i></span><span>Block<b>Radar</b></span></div>
+    <h1>Where should BlockRadar get its market data?</h1>
+    <p class="muted">Pick your broker. You'll enter its API keys on the next screen. You can switch any time in Settings.</p>
+    <div class="broker-grid big" id="picker-grid"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
