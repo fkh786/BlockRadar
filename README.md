@@ -15,15 +15,17 @@ It runs on your own computer, connects to your own broker account, and shows you
 ## Contents
 
 1. [What BlockRadar does](#what-blockradar-does)
-2. [Quick start (Windows)](#quick-start-windows)
-3. [Connect your broker](#connect-your-broker)
-4. [How to use it: a daily routine](#how-to-use-it-a-daily-routine)
-5. [What the words mean](#what-the-words-mean)
-6. [Troubleshooting](#troubleshooting)
-7. [Safety & privacy](#safety--privacy)
-8. [For developers](#for-developers)
-9. [Limits](#limits)
-10. [License & credits](#license--credits)
+2. [PC requirements](#pc-requirements)
+3. [Step-by-step guides](#step-by-step-guides)
+4. [Quick start (Windows)](#quick-start-windows)
+5. [Connect your broker](#connect-your-broker)
+6. [How to use it: a daily routine](#how-to-use-it-a-daily-routine)
+7. [What the words mean](#what-the-words-mean)
+8. [Troubleshooting](#troubleshooting)
+9. [Safety & privacy](#safety--privacy)
+10. [For developers](#for-developers)
+11. [Limits](#limits)
+12. [License & credits](#license--credits)
 
 ---
 
@@ -52,7 +54,52 @@ It runs on your own computer, connects to your own broker account, and shows you
 
 ---
 
+## PC requirements
+
+BlockRadar is light. Any normal laptop or desktop from the last 7–8 years is enough.
+
+| | Minimum | Recommended |
+|---|---|---|
+| **Operating system** | Windows 10 (64-bit) | Windows 11 (64-bit) |
+| | macOS 12+ or a recent Linux also work ([guide](docs/guides/06-mac-linux.md)) | |
+| **Processor** | Any dual-core (Intel i3 / AMD Ryzen 3 or similar) | Quad-core (i5 / Ryzen 5 or better) |
+| **Memory (RAM)** | 4 GB | 8 GB or more |
+| **Free disk space** | 200 MB | 500 MB, ideally on an SSD |
+| **Internet** | Stable broadband or Wi-Fi, 2 Mbps+ | Wired or strong Wi-Fi during market hours |
+| **Python** | 3.10 | 3.12 (tested on 3.12 and 3.13) |
+| **Browser** | Chrome, Edge or Firefox (recent) | Chrome or Edge |
+| **Broker** | A trading account with API access ([see costs](#connect-your-broker)), or none for Demo mode | |
+
+**What BlockRadar itself uses** (measured with about 220 instruments):
+- **Memory:** about **300 MB**
+- **CPU:** about 1 second of work per minute while the market is open; almost nothing when it's closed
+- **Disk:** about 30 MB for the app and its Python packages, plus up to about 50 MB of broker instrument lists (re-downloaded daily; old ones are deleted)
+- **Internet data:** roughly **100–200 MB per trading day** (the first load each morning is the largest part)
+
+**Keep in mind:**
+- The PC must stay **on and awake** during market hours for live updates and alerts. Set sleep to *Never* while plugged in ([how](docs/guides/01-install-windows.md#step-5-optional-make-it-easy-to-start-every-day)).
+- BlockRadar runs on the PC where it's installed. For safety it **can't be opened from your phone or another device**. Use [Telegram alerts](docs/guides/04-using-the-screens.md#alerts) to get notified on your phone.
+
+---
+
+## Step-by-step guides
+
+New to this? Follow these in order. Each one is written for non-programmers.
+
+| # | Guide | Time |
+|---|---|---|
+| 1 | [**Install BlockRadar on Windows**](docs/guides/01-install-windows.md): Python, download, first start | 10 min |
+| 2 | [**Connect your broker**](docs/guides/02-connect-broker.md): Upstox, Fyers, Zerodha, Dhan, click by click | 10 min |
+| 3 | [**Your daily routine**](docs/guides/03-daily-routine.md): what to do before, during and after market hours | 5 min read |
+| 4 | [**How to use each screen**](docs/guides/04-using-the-screens.md): Board, Charts, Options, Paper, Alerts (incl. Telegram), X-Ray, Journal | 10 min read |
+| 5 | [**Update, back up and uninstall**](docs/guides/05-update-backup-uninstall.md): keep your keys and trades safe | 5 min |
+| 6 | [**Install on Mac or Linux**](docs/guides/06-mac-linux.md) | 10 min |
+
+---
+
 ## Quick start (Windows)
+
+> The short version. For every click explained, see [Guide 1](docs/guides/01-install-windows.md).
 
 You need about 5 minutes and an internet connection.
 
