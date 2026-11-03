@@ -125,10 +125,28 @@ async function loadBoard() {
   const sel = $("#sector-filter");
   const cur = sel.value;
   sel.innerHTML = `<option value="">All sectors</option>` + secs.map(s => `<option ${s === cur ? "selected" : ""}>${esc(s)}</option>`).join("");
+  const PAGE = 20;
+  state.page = state.page || { bullish: 0, bearish: 0 };
   for (const side of ["bullish", "bearish"]) {
-    const rows = data[side].filter(r => !state.sector || r.sector === state.sector).slice(0, 20);
-    $("#rows-" + side).innerHTML = rows.length ? rows.map((r, i) => rowHtml(r, i, side)).join("")
+    const all = data[side].filter(r => !state.sector || r.sector === state.sector);
+    const pages = Math.max(1, Math.ceil(all.length / PAGE));
+    if (state.page[side] >= pages) state.page[side] = pages - 1;
+    const p = state.page[side], start = p * PAGE;
+    const rows = all.slice(start, start + PAGE);
+    $("#rows-" + side).innerHTML = rows.length ? rows.map((r, i) => rowHtml(r, start + i, side)).join("")
       : `<li class="empty">No ${side} setups${state.sector ? " in " + esc(state.sector) : ""} right now.</li>`;
+    let pg = $(`.pager[data-side="${side}"]`);
+    if (!pg) {
+      pg = document.createElement("div");
+      pg.className = "pager";
+      pg.dataset.side = side;
+      $("#rows-" + side).after(pg);
+    }
+    pg.innerHTML = all.length > PAGE
+      ? `<button class="btn sm" data-dir="-1" ${p === 0 ? "disabled" : ""}>← Previous</button>
+         <span>Page <b>${p + 1}</b> of ${pages} · showing ${start + 1}–${start + rows.length} of ${all.length}</span>
+         <button class="btn sm" data-dir="1" ${p >= pages - 1 ? "disabled" : ""}>Next →</button>`
+      : (all.length ? `<span>All ${all.length} shown</span>` : "");
   }
   $$(".board .col").forEach(col => col.classList.toggle("show", col.dataset.side === state.side));
 }
@@ -180,7 +198,14 @@ $("#board").addEventListener("click", e => {
   const row = e.target.closest(".row");
   if (row) location.hash = "chart/" + encodeURIComponent(row.dataset.sym);
 });
-$("#sector-filter").addEventListener("change", e => { state.sector = e.target.value; loadBoard(); });
+$("#sector-filter").addEventListener("change", e => { state.sector = e.target.value; state.page = { bullish: 0, bearish: 0 }; loadBoard(); });
+$("#board").addEventListener("click", e => {
+  const b = e.target.closest(".pager button[data-dir]");
+  if (!b || b.disabled) return;
+  const side = b.closest(".pager").dataset.side;
+  state.page[side] = Math.max(0, (state.page[side] || 0) + Number(b.dataset.dir));
+  loadBoard().then(() => { const col = $(`.board .col[data-side="${side}"]`); if (col) col.scrollIntoView({ behavior: "smooth", block: "start" }); });
+});
 $("#side-toggle").addEventListener("click", e => {
   const b = e.target.closest("button"); if (!b) return;
   state.side = b.dataset.side;
