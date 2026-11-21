@@ -102,6 +102,8 @@ SECTORS = sorted({s for s, _ in STOCKS.values()} | {"Other", "Index"})
 def sector_of(symbol: str) -> str:
     if symbol in INDICES:
         return "Index"
+    if symbol in MCX:
+        return MCX[symbol][0]
     return STOCKS.get(symbol, ("Other", 0))[0]
 
 
@@ -110,3 +112,33 @@ def demo_strike_step(price: float) -> float:
         if price < limit:
             return step
     return 250
+
+
+# ------------------------------------------------------------------ MCX commodities
+# symbol: (group, P&L in ₹ for a ₹1 price move on ONE lot, approx price for demo only, display name)
+# Point values follow MCX contract specs (lot size ÷ price-quotation unit). If MCX changes a
+# lot size, edit the second number here.
+MCX = {
+    "CRUDEOIL":   ("Energy", 100, 5600, "Crude Oil"),
+    "CRUDEOILM":  ("Energy", 10, 5600, "Crude Oil Mini"),
+    "NATURALGAS": ("Energy", 1250, 300, "Natural Gas"),
+    "NATGASMINI": ("Energy", 250, 300, "Natural Gas Mini"),
+    "GOLD":       ("Bullion", 100, 121000, "Gold (1 kg, per 10 g)"),
+    "GOLDM":      ("Bullion", 10, 121000, "Gold Mini (100 g)"),
+    "GOLDTEN":    ("Bullion", 1, 121000, "Gold Ten (10 g)"),
+    "GOLDGUINEA": ("Bullion", 1, 97000, "Gold Guinea (8 g)"),
+    "GOLDPETAL":  ("Bullion", 1, 12100, "Gold Petal (1 g)"),
+    "SILVER":     ("Bullion", 30, 148000, "Silver (30 kg, per kg)"),
+    "SILVERM":    ("Bullion", 5, 148000, "Silver Mini (5 kg)"),
+    "SILVERMIC":  ("Bullion", 1, 148000, "Silver Micro (1 kg)"),
+    "COPPER":     ("Base Metals", 2500, 1000, "Copper (2.5 MT, per kg)"),
+    "COPPERM":    ("Base Metals", 250, 1000, "Copper Mini"),
+    "ZINC":       ("Base Metals", 5000, 285, "Zinc (5 MT, per kg)"),
+    "ZINCMINI":   ("Base Metals", 1000, 285, "Zinc Mini (1 MT)"),
+    "ALUMINIUM":  ("Base Metals", 5000, 262, "Aluminium (5 MT, per kg)"),
+    "ALUMINI":    ("Base Metals", 1000, 262, "Aluminium Mini (1 MT)"),
+    "LEAD":       ("Base Metals", 5000, 182, "Lead (5 MT, per kg)"),
+    "LEADMINI":   ("Base Metals", 1000, 182, "Lead Mini (1 MT)"),
+}
+MCX_MAIN = ["CRUDEOIL", "NATURALGAS", "GOLD", "GOLDM", "SILVER", "SILVERM", "COPPER", "ZINC", "ALUMINIUM", "LEAD"]
+MCX_ROLL_DAYS = 3          # switch to the next month's future this many days before expiry

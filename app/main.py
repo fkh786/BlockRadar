@@ -24,6 +24,8 @@ from .journal import Journal
 from .models import IST, aggregate, now_ist
 from .options import build_helper, underlying_plan
 from .paper import PaperBook
+from . import sessions as exch
+from .universe import MCX_MAIN
 from .providers.demo import DemoProvider
 from .brokers import BROKERS, make as make_broker, public_info, token_ok
 from .providers import fyers as fyers_mod
@@ -155,7 +157,8 @@ class Scanner:
         self.results = await asyncio.to_thread(work)
         self.updated = time.time()
         bull, bear = self.ranked("bullish", 10), self.ranked("bearish", 10)
-        self.provider.priority = [r["symbol"] for r in bull + bear]
+        com = self.ranked("bullish", 3, "commodity") + self.ranked("bearish", 3, "commodity")
+        self.provider.priority = [r["symbol"] for r in bull + bear + com]
         alerts.configure(load_settings()["alerts"])
         alerts.evaluate(self.results, {"bullish": [r["symbol"] for r in bull],
                                        "bearish": [r["symbol"] for r in bear]})
@@ -164,9 +167,12 @@ class Scanner:
         p = self.provider
         m = p.market()
         cfg = load_settings()
+        kind = lambda s: p.stocks[s].kind if s in p.stocks else "stock"
         events = paper.update(
             lambda s: (p.stocks[s].ltp if s in p.stocks else None),
-            p.option_price, m.get("clock", ""), m.get("open", False), cfg.get("paper_eod", True))
+            p.option_price, m.get("clock", ""),
+            lambda s: p.is_open(kind(s)), lambda s: exch.eod_time(kind(s)),
+            cfg.get("paper_eod", True))
         if not cfg["alerts"].get("paper", True):
             return
         for ev in events:
@@ -182,9 +188,9 @@ class Scanner:
             alerts.add(r["symbol"], f"paper{r['id']}{e}", f"Paper: {r['label']} {word}", text,
                        1 if e in ("TARGET", "FILLED") else -1 if e == "STOP" else 0, force=True)
 
-    def ranked(self, bias: str, limit: int):
+    def ranked(self, bias: str, limit: int, kind: str = "stock"):
         rows = [r for r in self.results.values()
-                if r["bias"] == bias and r["score"] > 0 and r.get("kind") != "index"]
+                if r["bias"] == bias and r["score"] > 0 and r.get("kind") == kind]
         rows.sort(key=lambda r: (-r["score"], -abs(r["change_pct"])))
         return rows[:limit]
 
@@ -303,7 +309,7 @@ async def status():
 
 @app.get("/api/board")
 async def board(limit: int = 20):
-    res = [r for r in scanner.results.values() if r.get("kind") != "index"]
+    res = [r for r in scanner.results.values() if r.get("kind") == "stock"]
     idx = [card(r) for r in scanner.results.values() if r.get("kind") == "index"]
     idx.sort(key=lambda r: r["symbol"] != "NIFTY")
     return {
@@ -322,7 +328,38 @@ async def board(limit: int = 20):
 @app.get("/api/symbols")
 async def symbols():
     idx = sorted(s for s, r in scanner.results.items() if r.get("kind") == "index")
-    return idx + sorted(s for s, r in scanner.results.items() if r.get("kind") != "index")
+    return idx + sorted(s for s, r in scanner.results.items() if r.get("kind") == "stock")
+
+
+@app.get("/api/symbols/mcx")
+async def symbols_mcx():
+    return sorted(s for s, r in scanner.results.items() if r.get("kind") == "commodity")
+
+
+MCX_GROUP_ORDER = ["Energy", "Bullion", "Base Metals"]
+
+
+@app.get("/api/mcx")
+async def mcx_board():
+    p = scanner.provider
+    meta = getattr(p, "meta", {}) if p else {}
+    rows = []
+    for r in scanner.results.values():
+        if r.get("kind") != "commodity":
+            continue
+        c = card(r)
+        m = meta.get(r["symbol"]) or {}
+        c["contract"] = m.get("contract") or f"{r['symbol']} (simulated)"
+        c["fut_expiry"] = m.get("fut_expiry")
+        c["main"] = r["symbol"] in MCX_MAIN
+        c["has_options"] = bool(p.expiries(r["symbol"])) if p else False
+        rows.append(c)
+    rows.sort(key=lambda c: (-c["score"], -abs(c["change_pct"])))
+    by_bias = {b: [c for c in rows if c["bias"] == b] for b in ("bullish", "bearish", "choppy")}
+    by_bias["choppy"].sort(key=lambda c: (MCX_GROUP_ORDER.index(c["sector"]) if c["sector"] in MCX_GROUP_ORDER else 9,
+                                          not c["main"], c["symbol"]))
+    mk = (p.market() if p else {}).get("mcx") or {}
+    return {**by_bias, "groups": MCX_GROUP_ORDER, "count": len(rows), "market": mk, "updated": scanner.updated}
 
 
 TF_MINUTES = {"5": 5, "15": 15, "60": 60}
@@ -341,7 +378,7 @@ async def stock(symbol: str, sessions: int = 2, tf: str = "5"):
         sessions = max(sessions, 5)
     days = sorted({c.day for c in sd.candles})[-max(1, min(sessions, 10)):]
     keep = set(days)
-    candles = aggregate([c for c in sd.candles if c.day in keep], mins)
+    candles = aggregate([c for c in sd.candles if c.day in keep], mins, exch.anchor(sd.kind))
     t0 = candles[0].t if candles else 0
     src = r["order_blocks"] if mins == 5 else r["mtf_obs"].get("15m" if mins == 15 else "1h", [])
     obs = [o for o in src if o["status"] != "broken" or o.get("broken_t", 0) >= t0]
@@ -357,6 +394,7 @@ async def stock(symbol: str, sessions: int = 2, tf: str = "5"):
                     for c in candles],
         "order_blocks": obs,
         "liquidity": liq[:8],
+        "contract": (getattr(p, "meta", {}).get(symbol) or {}).get("contract"),
     }
 
 
@@ -384,7 +422,7 @@ async def options(symbol: str, expiry: str = ""):
 
 @app.get("/api/xray")
 async def xray():
-    rows = [r for r in scanner.results.values() if r.get("kind") != "index"]
+    rows = [r for r in scanner.results.values() if r.get("kind") == "stock"]
     points = [{"symbol": r["symbol"], "sector": r["sector"], "change_pct": r["change_pct"],
                "norm_move": r["norm_move"], "score": r["score"], "bias": r["bias"]} for r in rows]
     sectors: dict[str, dict] = {}
@@ -526,7 +564,7 @@ async def post_settings(body: dict = Body(...)):
                     switch = True
     if isinstance(body.get("alerts"), dict):
         a = body["alerts"]
-        for k in ("zone", "trap", "top", "paper"):
+        for k in ("zone", "trap", "top", "paper", "mcx"):
             if k in a:
                 s["alerts"][k] = bool(a[k])
         for k in ("min_score", "cooldown_min"):

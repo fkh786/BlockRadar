@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 
 from ..models import Candle, now_ist
 from ..universe import INDICES
-from .broker import BrokerError, BrokerProvider, Limiter, LoginRequired, chunks, parse_ts
+from .broker import BrokerError, BrokerProvider, Limiter, LoginRequired, chunks, parse_ts, mcx_symbol, session_end
 
 API = "https://api.kite.trade"
 LOGIN = "https://kite.zerodha.com/connect/login"
@@ -134,10 +134,36 @@ class ZerodhaProvider(BrokerProvider):
                           "expiries": sorted(self.options.get(name, {})), "name": name}
         return meta
 
+    async def _mcx_contracts(self):
+        out = []
+        for x in await self._csv("MCX"):
+            itype, seg = x.get("instrument_type"), x.get("segment") or ""
+            sym = mcx_symbol(x.get("name", "").strip('"'))
+            try:
+                exp = date.fromisoformat(x.get("expiry") or "")
+            except ValueError:
+                continue
+            if not sym:
+                continue
+            ts = x["tradingsymbol"]
+            if itype in ("CE", "PE"):
+                out.append({"sym": sym, "type": itype, "expiry": exp, "strike": float(x.get("strike") or 0),
+                            "key": f"MCX:{ts}"})
+            elif itype == "FUT" and seg.startswith("MCX"):
+                out.append({"sym": sym, "type": "FUT", "expiry": exp, "key": f"MCX:{ts}", "label": ts,
+                            "meta": {"spot": x["instrument_token"], "fut": x["instrument_token"], "fut_sym": ts,
+                                     "spot_q": f"MCX:{ts}", "fut_q": f"MCX:{ts}"}})
+        return out
+
+    async def _quote_keys(self, keys):
+        q = await self._quote(keys)
+        return {k: {"ltp": v.get("last_price") or 0, "oi": v.get("oi") or 0, "volume": v.get("volume") or 0}
+                for k, v in q.items()}
+
     # ------------------------------------------------------------- candles
-    async def _hist(self, token, d0: date, d1: date, oi=False) -> list[Candle]:
+    async def _hist(self, token, d0: date, d1: date, oi=False, end="15:30:00") -> list[Candle]:
         data = await self._get(f"/instruments/historical/{token}/5minute", {
-            "from": f"{d0.isoformat()} 09:00:00", "to": f"{d1.isoformat()} 15:30:00", "oi": 1 if oi else 0})
+            "from": f"{d0.isoformat()} 09:00:00", "to": f"{d1.isoformat()} {end}", "oi": 1 if oi else 0})
         out = []
         for r in (data or {}).get("candles") or []:
             out.append(Candle(t=parse_ts(r[0]), o=float(r[1]), h=float(r[2]), l=float(r[3]), c=float(r[4]),
@@ -145,11 +171,11 @@ class ZerodhaProvider(BrokerProvider):
         return out
 
     async def _history(self, sym, m, d0, d1):
-        return await self._hist(m["spot"], d0, d1)
+        return await self._hist(m["spot"], d0, d1, end=session_end(m))
 
     async def _fut_oi(self, sym, m):
         today = now_ist().date()
-        cs = [c for c in await self._hist(m["fut"], today - timedelta(days=6), today, oi=True) if c.oi]
+        cs = [c for c in await self._hist(m["fut"], today - timedelta(days=6), today, oi=True, end=session_end(m)) if c.oi]
         if not cs:
             return 0.0, 0.0
         prev = [c for c in cs if c.day < cs[-1].day]
@@ -167,8 +193,12 @@ class ZerodhaProvider(BrokerProvider):
         back = {}
         for s in syms:
             m = self.meta[s]
+            fut_q = m.get("fut_q") or f"NFO:{m['fut_sym']}"
+            if fut_q == m["spot_q"]:              # MCX: the future is both price and OI
+                back[fut_q] = (s, "both")
+                continue
             back[m["spot_q"]] = (s, "spot")
-            back[f"NFO:{m['fut_sym']}"] = (s, "fut")
+            back[fut_q] = (s, "fut")
         for k in extra:
             back.setdefault(k, (k, "extra"))
         q = await self._quote(list(back))
@@ -182,10 +212,11 @@ class ZerodhaProvider(BrokerProvider):
             if kind == "extra":
                 if lp:
                     ext[name] = float(lp)
-            elif kind == "spot" and lp:
+                continue
+            if kind in ("spot", "both") and lp:
                 prev = (v.get("ohlc") or {}).get("close") or (lp - (v.get("net_change") or 0))
                 data.setdefault(name, {}).update(ltp=lp, prev_close=prev, volume=v.get("volume"))
-            elif kind == "fut" and v.get("oi"):
+            if kind in ("fut", "both") and v.get("oi"):
                 data.setdefault(name, {})["oi"] = v["oi"]
         return data, ext
 

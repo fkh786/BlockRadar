@@ -320,3 +320,28 @@ details.tg summary { cursor: pointer; color: var(--muted); font-size: 13px; marg
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 12.5px; color: var(--muted); }
 .pager b { color: var(--text); }
 .pager:empty { display: none; }
+
+/* ---------- MCX ---------- */
+.mcx-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.mcx-head h1 { font-size: 20px; margin: 0 0 4px; }
+.mcx-head .sub { color: var(--muted); font-size: 13px; }
+.mcx-head .sub .live { color: var(--bull); font-weight: 600; }
+.mcx-head .sub .shut { color: var(--gold); font-weight: 600; }
+.mcx-head .board-tools { flex-wrap: wrap; }
+.row .pv { color: var(--faint); font-size: 11.5px; font-family: var(--mono); white-space: nowrap; }
+.mcx-sub-h { font-size: 13px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
+.mcx-sub-h .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.mcx-chop { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
+.mcx-chop .chip { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 9px 11px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius); cursor: pointer; }
+.mcx-chop .chip:hover { border-color: var(--line-2); background: var(--panel-2); }
+.mcx-chop .chip b { font-size: 14px; }
+.mcx-chop .chip .mono { text-align: right; }
+.mcx-chop .chip .muted { font-size: 11.5px; }
+.mcx-chop:empty::before { content: "Every commodity has a setup right now."; color: var(--faint); font-size: 13px; }
+.mcx-foot { margin-top: 18px; max-width: 900px; line-height: 1.5; }
+.tag.mcx { color: #e0b0ff; border-color: rgba(196,140,255,.4); }
+@media (max-width: 760px) {
+  #mcx-board .col:not(.show) { display: none; }
+  .mcx-head .seg button { padding: 5px 9px; }
+}

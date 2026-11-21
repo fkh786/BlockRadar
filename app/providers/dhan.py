@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 
 from ..models import IST, Candle, now_ist
 from ..universe import INDICES
-from .broker import BrokerError, BrokerProvider, Limiter, LoginRequired, chunks, parse_ts
+from .broker import BrokerError, BrokerProvider, Limiter, LoginRequired, chunks, mcx_symbol, parse_ts, session_end
 
 API = "https://api.dhan.co/v2"
 MASTER = "https://images.dhan.co/api-data/api-scrip-master.csv"
@@ -46,6 +46,8 @@ def parse_master(text: str) -> list[dict]:
             "series": _col(r, "SEM_SERIES", "SERIES").upper(),
             "under": _col(r, "UNDERLYING_SYMBOL"),
             "name": _col(r, "SM_SYMBOL_NAME", "DISPLAY_NAME"),
+            "strike": _col(r, "SEM_STRIKE_PRICE", "STRIKE_PRICE", default="0"),
+            "opt": _col(r, "SEM_OPTION_TYPE", "OPTION_TYPE").upper(),
         })
     return out
 
@@ -107,6 +109,7 @@ class DhanProvider(BrokerProvider):
     async def _universe(self):
         text = (await self._download_cached(MASTER, "scrip-master.csv")).decode("utf-8", "replace")
         rows = parse_master(text)
+        self._mcx_rows = [x for x in rows if x["exch"] == "MCX"]     # used by _mcx_contracts
         today = now_ist().date()
         eq: dict[str, dict] = {}
         futs: dict[str, dict] = {}
@@ -147,11 +150,52 @@ class DhanProvider(BrokerProvider):
                        "expiries": sorted(exps.get(u, ())), "name": (eq.get(u) or {}).get("name") or u}
         return meta
 
+    async def _mcx_contracts(self):
+        """MCX rows come from the same scrip master: FUTCOM futures, OPTFUT options on futures."""
+        out = []
+        for x in getattr(self, "_mcx_rows", []):
+            inst = x["inst"]
+            if inst not in ("FUTCOM", "OPTFUT"):
+                continue
+            sym = mcx_symbol(x["under"], x["sym"].split("-")[0].split(" ")[0], x["name"])
+            d = _exp_date(x["expiry"])
+            if not sym or not d:
+                continue
+            if inst == "FUTCOM":
+                out.append({"sym": sym, "type": "FUT", "expiry": d, "key": f"MCX_COMM|{x['id']}", "label": x["sym"],
+                            "meta": {"spot": x["id"], "seg": "MCX_COMM", "inst": "FUTCOM",
+                                     "fut": x["id"], "fut_seg": "MCX_COMM", "fut_inst": "FUTCOM"}})
+            else:
+                cp = x["opt"] if x["opt"] in ("CE", "PE") else ("CE" if x["sym"].endswith("CE") else
+                                                               "PE" if x["sym"].endswith("PE") else "")
+                if cp:
+                    out.append({"sym": sym, "type": cp, "expiry": d, "strike": float(x["strike"] or 0),
+                                "key": f"MCX_COMM|{x['id']}"})
+        self._mcx_rows = []
+        return out
+
+    async def _quote_keys(self, keys):
+        body: dict[str, list[int]] = {}
+        for k in keys:
+            seg, _, sid = k.partition("|")
+            if sid.isdigit():
+                body.setdefault(seg, []).append(int(sid))
+        out = {}
+        if not body:
+            return out
+        js = await self._post("/marketfeed/quote", body, self.quote_limiter)
+        for seg, items in (js.get("data") or {}).items():
+            for sid, q in (items or {}).items():
+                if isinstance(q, dict):
+                    out[f"{seg}|{sid}"] = {"ltp": q.get("last_price") or 0, "oi": q.get("oi") or 0,
+                                           "volume": q.get("volume") or 0}
+        return out
+
     # ------------------------------------------------------------- candles
-    async def _intraday(self, sec_id, seg, inst, d0: date, d1: date, oi=False) -> list[Candle]:
+    async def _intraday(self, sec_id, seg, inst, d0: date, d1: date, oi=False, end="15:30:00") -> list[Candle]:
         js = await self._post("/charts/intraday", {
             "securityId": str(sec_id), "exchangeSegment": seg, "instrument": inst, "interval": "5", "oi": oi,
-            "fromDate": f"{d0.isoformat()} 09:00:00", "toDate": f"{d1.isoformat()} 15:30:00"})
+            "fromDate": f"{d0.isoformat()} 09:00:00", "toDate": f"{d1.isoformat()} {end}"})
         d = js.get("data") if isinstance(js.get("data"), dict) else js
         ts = d.get("timestamp") or []
         o, h, l, c = d.get("open") or [], d.get("high") or [], d.get("low") or [], d.get("close") or []
@@ -166,12 +210,12 @@ class DhanProvider(BrokerProvider):
         return out
 
     async def _history(self, sym, m, d0, d1):
-        return await self._intraday(m["spot"], m["seg"], m["inst"], d0, d1)
+        return await self._intraday(m["spot"], m["seg"], m["inst"], d0, d1, end=session_end(m))
 
     async def _fut_oi(self, sym, m):
         today = now_ist().date()
-        cs = [c for c in await self._intraday(m["fut"], "NSE_FNO", m["fut_inst"], today - timedelta(days=6), today, oi=True)
-              if c.oi]
+        cs = [c for c in await self._intraday(m["fut"], m.get("fut_seg", "NSE_FNO"), m["fut_inst"],
+                                              today - timedelta(days=6), today, oi=True, end=session_end(m)) if c.oi]
         if not cs:
             return 0.0, 0.0
         prev = [c for c in cs if c.day < cs[-1].day]
@@ -183,6 +227,10 @@ class DhanProvider(BrokerProvider):
         back: dict[tuple, tuple] = {}
         for s in syms:
             m = self.meta[s]
+            if m.get("kind") == "commodity":      # the future is both the price and the OI series
+                req.setdefault(m["seg"], []).append(int(m["spot"]))
+                back[(m["seg"], str(m["spot"]))] = (s, "both")
+                continue
             req.setdefault(m["seg"], []).append(int(m["spot"]))
             back[(m["seg"], str(m["spot"]))] = (s, "spot")
             req.setdefault("NSE_FNO", []).append(int(m["fut"]))
@@ -209,10 +257,10 @@ class DhanProvider(BrokerProvider):
                     if kind == "extra":
                         if lp:
                             ext[name] = float(lp)
-                    elif kind == "spot" and lp:
+                    if kind in ("spot", "both") and lp:
                         prev = (lp - q["net_change"]) if q.get("net_change") is not None else (q.get("ohlc") or {}).get("close")
                         data.setdefault(name, {}).update(ltp=lp, prev_close=prev, volume=q.get("volume"))
-                    elif kind == "fut" and q.get("oi"):
+                    if kind in ("fut", "both") and q.get("oi"):
                         data.setdefault(name, {})["oi"] = q["oi"]
         return data, ext
 

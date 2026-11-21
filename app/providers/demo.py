@@ -13,7 +13,7 @@ from datetime import date, datetime, timedelta
 
 from ..models import IST, Candle, StockData, session_open_ts
 from ..options import bs, demo_expiries, years_to_expiry
-from ..universe import INDICES, STOCKS, demo_strike_step
+from ..universe import INDICES, MCX, STOCKS, demo_strike_step
 from .base import Provider
 
 SESSION_MINUTES = 375          # 09:15 -> 15:30
@@ -82,6 +82,11 @@ class _Path:
         return out
 
 
+DEMO_PARENT = {"CRUDEOILM": "CRUDEOIL", "NATGASMINI": "NATURALGAS", "GOLDM": "GOLD", "GOLDTEN": "GOLD",
+               "GOLDGUINEA": "GOLD", "GOLDPETAL": "GOLD", "SILVERM": "SILVER", "SILVERMIC": "SILVER",
+               "COPPERM": "COPPER", "ZINCMINI": "ZINC", "ALUMINI": "ALUMINIUM", "LEADMINI": "LEAD"}
+
+
 class DemoProvider(Provider):
     key = "demo"
     label = "Demo (simulated data)"
@@ -110,9 +115,15 @@ class DemoProvider(Provider):
         self.stocks.clear()
         universe = [(s, sec, base, "stock") for s, (sec, base) in STOCKS.items() if s != "ZOMATO"]
         universe += [(s, "Index", v[1], "index") for s, v in INDICES.items()]
+        universe += [(s, v[0], v[2], "commodity") for s, v in MCX.items()]
         for sym, sector, base, kind in universe:
-            rng = random.Random(f"{self.seed}-{sym}")
-            if kind == "index":
+            # mini / micro contracts move with their parent contract
+            rng = random.Random(f"{self.seed}-{DEMO_PARENT.get(sym, sym)}")
+            if kind == "commodity":
+                daily_vol = rng.uniform(0.009, 0.024)
+                base_vol = rng.uniform(800, 9_000)
+                oi = rng.uniform(5e3, 6e4)
+            elif kind == "index":
                 daily_vol = rng.uniform(0.007, 0.011)
                 base_vol = 0.0
                 oi = rng.uniform(1.2e7, 2.0e7)
@@ -124,7 +135,9 @@ class DemoProvider(Provider):
             price = base * rng.uniform(0.97, 1.03) if kind == "index" else base * rng.uniform(0.9, 1.1)
             days = []
             for i, _ in enumerate(self.sessions):
-                if kind == "index":
+                if kind == "commodity":
+                    bias = rng.gauss(0, 0.8)          # commodities don't follow the NSE market
+                elif kind == "index":
                     bias = market_bias[i] * 2 + rng.gauss(0, 0.3)
                 else:
                     bias = market_bias[i] + sector_bias[(sector, i)] + rng.gauss(0, 0.6)
@@ -140,6 +153,8 @@ class DemoProvider(Provider):
             self.paths[sym] = days
             if kind == "index":
                 name, lot = INDICES[sym][0], INDICES[sym][3]
+            elif kind == "commodity":
+                name, lot = MCX[sym][3], MCX[sym][1]
             else:
                 name, lot = sym, max(25, int(round(500000 / base / 25) * 25))
             self.stocks[sym] = StockData(symbol=sym, name=name, sector=sector, kind=kind, lot_size=lot)
@@ -149,8 +164,9 @@ class DemoProvider(Provider):
         now = time.time()
         for sym, days in self.paths.items():
             candles: list[Candle] = []
+            anchor = (9, 0) if self.stocks[sym].kind == "commodity" else (9, 15)
             for i, d in enumerate(self.sessions):
-                t0 = session_open_ts(d)
+                t0 = session_open_ts(d, anchor)
                 upto = SESSION_MINUTES if i < len(self.sessions) - 1 else k
                 candles.extend(days[i].candles_5m(t0, upto))
             today_path = days[-1]
@@ -196,6 +212,9 @@ class DemoProvider(Provider):
             "clock": f"{hh:02d}:{mm:02d}",
             "session": self.sessions[-1].isoformat() if self.sessions else "",
             "label": "Demo market open (simulated)" if open_ else "Demo market closed (simulated)",
+            # demo runs MCX on the same simulated clock as NSE, to keep things simple
+            "mcx": {"open": open_, "hours": "simulated", "close": "",
+                    "label": "Demo MCX open (simulated)" if open_ else "Demo MCX closed (simulated)"},
         }
 
     # ------------------------------------------------------------------ options

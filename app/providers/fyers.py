@@ -17,11 +17,14 @@ from urllib.parse import urlencode
 
 from ..models import IST, Candle, now_ist
 from ..universe import INDICES
-from .broker import BrokerError, BrokerProvider, LoginRequired, chunks, parse_ts
+import re
+
+from .broker import BrokerError, BrokerProvider, LoginRequired, chunks, mcx_symbol, parse_ts
 
 API = "https://api-t1.fyers.in/api/v3"
 DATA = "https://api-t1.fyers.in/data"
 FO_MASTER = "https://public.fyers.in/sym_details/NSE_FO.csv"
+MCX_MASTER = "https://public.fyers.in/sym_details/MCX_COM.csv"
 INDEX_SYMBOL = {"NIFTY": "NSE:NIFTY50-INDEX", "BANKNIFTY": "NSE:NIFTYBANK-INDEX"}
 FUTIDX, FUTSTK, OPTIDX, OPTSTK = 11, 13, 14, 15
 AUTH_FAIL_CODES = {-8, -15, -16, -17}
@@ -42,7 +45,7 @@ async def exchange_code(client, app_id: str, secret: str, auth_code: str) -> str
     return js["access_token"]
 
 
-def parse_master(text: str) -> list[dict]:
+def parse_master(text: str, prefix: str = "NSE:") -> list[dict]:
     """
     Fyers NSE_FO.csv has no header. Documented column order:
     0 fytoken, 1 symbol details, 2 instrument type, 3 lot size, 4 tick size, 5 isin,
@@ -59,8 +62,8 @@ def parse_master(text: str) -> list[dict]:
         if tick_i is None:
             if not r[0].strip().isdigit():          # header line
                 continue
-            tick_i = 9 if r[9].startswith("NSE:") else next(
-                (i for i, v in enumerate(r) if v.startswith("NSE:")), None)
+            tick_i = 9 if r[9].startswith(prefix) else next(
+                (i for i, v in enumerate(r) if v.startswith(prefix)), None)
             if tick_i is None:
                 raise BrokerError("Unrecognised Fyers symbol master format")
         try:
@@ -130,6 +133,34 @@ class FyersProvider(BrokerProvider):
             e = exps.get(u, {})
             meta[u] = {**f, "spot": spot, "expiries": sorted(e), "exp_epoch": e, "name": u}
         return meta
+
+    async def _mcx_contracts(self):
+        text = (await self._download_cached(MCX_MASTER, "MCX_COM.csv")).decode("utf-8", "replace")
+        out = []
+        for x in parse_master(text, "MCX:"):
+            tk = x["ticker"]
+            head = re.match(r"[A-Z]+", tk[4:])
+            sym = mcx_symbol(x["under"], head.group(0) if head else "")
+            if not sym or not x["expiry"]:
+                continue
+            exp = datetime.fromtimestamp(x["expiry"], IST).date()
+            if x["opt"] in ("CE", "PE"):
+                out.append({"sym": sym, "type": x["opt"], "expiry": exp, "strike": x["strike"], "key": tk})
+            elif tk.endswith("FUT"):
+                out.append({"sym": sym, "type": "FUT", "expiry": exp, "key": tk, "label": tk[4:],
+                            "meta": {"spot": tk, "fut": tk}})
+        return out
+
+    async def _quote_keys(self, keys):
+        out = {}
+        for part in chunks(keys, 50):
+            js = await self._get(f"{DATA}/quotes", {"symbols": ",".join(part)})
+            for item in js.get("d") or []:
+                v = item.get("v") or {}
+                name = item.get("n") or v.get("symbol")
+                if name and v.get("lp") is not None:
+                    out[name] = {"ltp": v["lp"], "volume": v.get("volume") or 0, "oi": 0}
+        return out
 
     # ------------------------------------------------------------- candles
     async def _hist(self, symbol: str, d0: date, d1: date, oi: bool = False) -> list[Candle]:

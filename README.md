@@ -1,7 +1,7 @@
 # BlockRadar
 
-**A free, open-source order-block and liquidity scanner for Indian F&O stocks, NIFTY and BANKNIFTY.**
-It runs on your own computer, connects to your own broker account, and shows you, every minute, which stocks have the strongest bullish and bearish setups, with the exact price zones to watch.
+**A free, open-source order-block and liquidity scanner for Indian F&O stocks, NIFTY, BANKNIFTY and MCX commodities.**
+It runs on your own computer, connects to your own broker account, and shows you, every minute, which stocks and commodities have the strongest bullish and bearish setups, with the exact price zones to watch.
 
 ![BlockRadar board](docs/screenshots/board.png)
 
@@ -34,9 +34,10 @@ It runs on your own computer, connects to your own broker account, and shows you
 | Screen | What you get |
 |---|---|
 | **Board** | NIFTY and BANKNIFTY at the top, then the 20 strongest **bullish** and 20 strongest **bearish** F&O stocks, re-ranked every minute. Each row shows the order-block zone, support, resistance, the nearest liquidity level, the futures OI reading (long buildup, short covering…) and whether the 15-min and 1-hour charts agree. Choppy stocks are hidden. |
+| **MCX** | The same scan for 20 MCX commodity futures (crude oil, natural gas, gold, silver, copper, zinc, aluminium, lead, plus their mini and micro contracts). Runs until the MCX close at 23:30, with options helper, paper trading and alerts. [Guide 7](docs/guides/07-mcx-commodities.md) |
 | **Charts** | 5-min, 15-min or 1-hour candles with order-block boxes, liquidity lines, support, resistance and VWAP drawn for you. A side card explains the setup in plain numbers. |
 | **Options helper** | Under each chart: suggests calls or puts, shows ITM / ATM / OTM strikes with premium, delta, IV and OI change, and converts the stock's entry / stop / target into option prices, cost per lot, risk per lot and time decay per day. |
-| **Paper trading** | Practise without money. Take a simulated trade on the stock, index or an option, either straight away or as a "limit at zone" order that waits for price to come back. Stops, targets and the 15:20 square-off are handled automatically. |
+| **Paper trading** | Practise without money. Take a simulated trade on the stock, index or an option, either straight away or as a "limit at zone" order that waits for price to come back. Stops, targets and the square-off before the close (15:20 for stocks, 10 minutes before the MCX close for commodities) are handled automatically. |
 | **Alerts** | Sound, desktop pop-up and optional Telegram message when a strong stock enters its zone, when a liquidity trap fires, or when a paper trade hits its stop or target. |
 | **X-Ray** | Every F&O stock on one map, plus market breadth and which sectors are leading or lagging. |
 | **Journal** | Log your real trades and see win rate, average R and profit factor, broken down by setup. |
@@ -49,6 +50,9 @@ It runs on your own computer, connects to your own broker account, and shows you
 <tr>
 <td><img src="docs/screenshots/paper.png" alt="Paper trading"><br><sub>Paper trading (simulated demo data, not real results)</sub></td>
 <td><img src="docs/screenshots/xray.png" alt="Market X-Ray"><br><sub>X-Ray: whole market and sectors at a glance</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/mcx.png" alt="MCX commodities tab"><br><sub>MCX tab: commodity futures ranked the same way (simulated demo data)</sub></td>
 </tr>
 </table>
 
@@ -94,6 +98,7 @@ New to this? Follow these in order. Each one is written for non-programmers.
 | 4 | [**How to use each screen**](docs/guides/04-using-the-screens.md): Board, Charts, Options, Paper, Alerts (incl. Telegram), X-Ray, Journal | 10 min read |
 | 5 | [**Update, back up and uninstall**](docs/guides/05-update-backup-uninstall.md): keep your keys and trades safe | 5 min |
 | 6 | [**Install on Mac or Linux**](docs/guides/06-mac-linux.md) | 10 min |
+| 7 | [**MCX commodities**](docs/guides/07-mcx-commodities.md): the MCX tab, ₹ per point, contract rollover, evening session | 5 min read |
 
 ---
 
@@ -261,7 +266,8 @@ app/
   paper.py         paper-trading engine (SQLite)
   journal.py       trade journal (SQLite)
   brokers.py       broker list shown in the picker
-  universe.py      sector names, index settings
+  universe.py      sector names, index settings, MCX contract list (₹ per point, roll days)
+  sessions.py      NSE and MCX trading hours (incl. MCX's US-summer-time close)
   providers/
     broker.py      shared logic for live brokers (rate limits, live candles, rotation)
     upstox.py  fyers.py  zerodha.py  dhan.py   one file per broker
@@ -277,7 +283,7 @@ data/              your settings, journal and caches (git-ignored)
 - The analysis thresholds are constants at the top of `app/engine.py`.
 
 ### Adding a broker
-Subclass `BrokerProvider` in `app/providers/broker.py`. Implement `_universe`, `_history`, `_fut_oi`, `_quotes` and `_chain`, then register the broker in `app/brokers.py` and add its login route in `app/main.py` if it uses a browser login. `fyers.py` is a compact example.
+Subclass `BrokerProvider` in `app/providers/broker.py`. Implement `_universe`, `_history`, `_fut_oi`, `_quotes` and `_chain`. For MCX, also implement `_mcx_contracts` (futures and options from the broker's MCX instrument list) and `_quote_keys` (live prices for option contracts); the base class handles rollover, evening sessions and the option chain. Then register the broker in `app/brokers.py` and add its login route in `app/main.py` if it uses a browser login. `fyers.py` is a compact example.
 
 Pull requests are welcome, especially reports confirming the beta brokers with real accounts.
 
@@ -290,6 +296,8 @@ Pull requests are welcome, especially reports confirming the beta brokers with r
 - Futures OI uses the nearest-expiry contract, so OI readings are weaker in the last few days before expiry.
 - Option prices in the helper are same-day estimates from the Greeks; time decay and IV changes will move real prices.
 - Exchange holidays aren't hard-coded; on a holiday the app shows the last session.
+- MCX: price and OI come from the near-month future (rolled 3 days before expiry). MCX option OI change isn't available, and Fyers quotes carry no option OI.
+- MCX ₹-per-point values come from a fixed table in `app/universe.py`; update it if MCX changes a lot size.
 - Stocks missing from `app/universe.py` show their sector as "Other".
 
 ---

@@ -41,10 +41,11 @@ const state = {
 /* ================================================================ router */
 function route() {
   const [view, arg] = (location.hash.slice(1) || "board").split("/");
-  state.view = ["board", "chart", "xray", "paper", "journal", "settings"].includes(view) ? view : "board";
+  state.view = ["board", "mcx", "chart", "xray", "paper", "journal", "settings"].includes(view) ? view : "board";
   if (state.view === "chart" && arg) state.sym = decodeURIComponent(arg).toUpperCase();
   $$(".view").forEach(v => (v.hidden = v.id !== "view-" + state.view));
   $$("#tabs a").forEach(a => a.classList.toggle("on", a.dataset.view === state.view));
+  if (state.status) renderStatus(state.status);
   loadView();
 }
 window.addEventListener("hashchange", route);
@@ -56,7 +57,7 @@ function loadView() {
     if (state.view === "settings") return loadSettings();
     return;
   }
-  ({ board: loadBoard, chart: loadChart, xray: loadXray, paper: loadPaper, journal: loadJournal, settings: loadSettings })[state.view]();
+  ({ board: loadBoard, mcx: loadMcx, chart: loadChart, xray: loadXray, paper: loadPaper, journal: loadJournal, settings: loadSettings })[state.view]();
 }
 
 /* ================================================================ status */
@@ -69,7 +70,7 @@ async function pollStatus() {
     maybeShowPicker(s);
     if (s.ready && (s.updated !== state.lastUpdated || !wasReady)) {
       state.lastUpdated = s.updated;
-      if (["board", "chart", "xray", "paper"].includes(state.view)) loadView();
+      if (["board", "mcx", "chart", "xray", "paper"].includes(state.view)) loadView();
     }
     if (state.lastAlert === null) state.lastAlert = s.last_alert;
     else if (s.last_alert > state.lastAlert) fetchAlerts();
@@ -83,9 +84,11 @@ async function pollStatus() {
 function renderStatus(s) {
   const m = s.market || {};
   const el = $("#status");
-  el.className = "status " + (s.error ? "err" : s.needs_login ? "warn" : (s.ready && m.open) ? "live" : "warn");
+  const mcx = m.mcx || {};
+  el.className = "status " + (s.error ? "err" : s.needs_login ? "warn" : (s.ready && (m.open || mcx.open)) ? "live" : "warn");
   const parts = [s.mode === "demo" ? "Demo" : (s.broker_name || s.mode)];
   if (m.clock) parts.push(m.clock + " IST");
+  if (s.mode !== "demo" && mcx.open && !m.open) parts.push("MCX open");
   if (s.updated_label) parts.push("updated " + s.updated_label);
   $("#status-text").textContent = parts.join(" · ");
 
@@ -102,7 +105,8 @@ function renderStatus(s) {
     const w = t ? Math.round(d / t * 100) : 5;
     html = `${esc(s.message || "Loading…")} ${t > 1 ? `(${d}/${t})` : ""}<div class="bar"><i style="width:${w}%"></i></div>`;
   } else if (s.mode === "demo") html = `Demo mode: prices are simulated so you can try every screen. Connect your broker in <a href="#settings">Settings</a>.`;
-  else if (!m.open) html = esc(m.label);
+  else if (state.view === "mcx") html = mcx.open ? "" : esc(mcx.label || "");
+  else if (!m.open) html = esc(m.label) + (mcx.open ? ` · <a href="#mcx">MCX is open now</a>` : "");
   b.innerHTML = html;
   b.hidden = !html;
 }
@@ -166,7 +170,7 @@ function rowHtml(r, i, side) {
   const liq = r.stop_liquidity;
   return `<li class="row" data-sym="${esc(r.symbol)}">
     <span class="rk">${String(i + 1).padStart(2, "0")}</span>
-    <div class="id"><span class="sym">${esc(r.symbol)}</span><span class="sec">${esc(r.sector)}</span></div>
+    <div class="id"><span class="sym">${esc(r.symbol)}</span><span class="sec">${esc(r.sector)}</span>${r.kind === "commodity" ? `<span class="pv" title="Profit or loss for a ₹1 move on one lot">₹${fmt(r.lot_size, 0)}/pt</span>` : ""}</div>
     <div class="px">${fmt(r.ltp)}<span class="chg ${cls(r.change_pct)}">${pct(r.change_pct)}</span></div>
     <div class="meta"><div class="meter"><i style="width:${r.score}%"></i></div><span class="score">${r.score}</span>${tags.join("")}</div>
     <div class="levels">
@@ -211,6 +215,52 @@ $("#side-toggle").addEventListener("click", e => {
   state.side = b.dataset.side;
   $$("#side-toggle button").forEach(x => x.classList.toggle("on", x === b));
   $$(".board .col").forEach(col => col.classList.toggle("show", col.dataset.side === state.side));
+});
+
+/* ================================================================ MCX */
+state.mcxGroup = store.get("mcxGroup", "");
+state.mcxSize = store.get("mcxSize", "all");
+state.mcxSide = "bullish";
+
+async function loadMcx() {
+  const d = await api("/api/mcx");
+  state.mcx = d;
+  const mk = d.market || {};
+  $("#mcx-session").innerHTML = (mk.open ? `<span class="live">● MCX open</span>` : `<span class="shut">● MCX closed</span> · showing the last session`) +
+    (mk.hours && mk.hours !== "simulated" ? ` · trading hours ${esc(mk.hours)} IST` : "") +
+    ` · ${d.count} contracts` + (mk.error ? ` · <span class="down">${esc(mk.error)}</span>` : "");
+  const keep = r => (!state.mcxGroup || r.sector === state.mcxGroup) && (state.mcxSize === "all" || r.main);
+  const bull = d.bullish.filter(keep), bear = d.bearish.filter(keep), chop = d.choppy.filter(keep);
+  $("#mcx-counts").innerHTML = `<span><b class="up">${bull.length}</b>bullish</span><span><b class="down">${bear.length}</b>bearish</span><span><b>${chop.length}</b>choppy</span>`;
+  const label = r => ({ ...r, sector: r.sector + " · " + (r.name || "") });
+  $("#mcx-bullish").innerHTML = bull.length ? bull.map((r, i) => rowHtml(label(r), i, "bullish")).join("") : `<li class="empty">No bullish commodity setups right now.</li>`;
+  $("#mcx-bearish").innerHTML = bear.length ? bear.map((r, i) => rowHtml(label(r), i, "bearish")).join("") : `<li class="empty">No bearish commodity setups right now.</li>`;
+  $("#mcx-choppy").innerHTML = chop.map(r => `<div class="chip" data-sym="${esc(r.symbol)}">
+      <b>${esc(r.symbol)}</b><span class="mono">${fmt(r.ltp)}</span>
+      <span class="muted">${esc(r.sector)} · ₹${fmt(r.lot_size, 0)}/pt</span><span class="mono ${cls(r.change_pct)}">${pct(r.change_pct)}</span></div>`).join("");
+  $$("#mcx-board .col").forEach(col => col.classList.toggle("show", col.dataset.side === state.mcxSide));
+}
+$("#view-mcx").addEventListener("click", e => {
+  const el = e.target.closest(".row, .chip");
+  if (el) location.hash = "chart/" + encodeURIComponent(el.dataset.sym);
+});
+function mcxSeg(id, key, attr) {
+  const box = $(id);
+  $$("button", box).forEach(b => b.classList.toggle("on", b.dataset[attr] === state[key]));
+  box.addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    state[key] = b.dataset[attr]; store.set(key, state[key]);
+    $$("button", box).forEach(x => x.classList.toggle("on", x === b));
+    if (state.mcx) loadMcx();
+  });
+}
+mcxSeg("#mcx-group", "mcxGroup", "g");
+mcxSeg("#mcx-size", "mcxSize", "s");
+$("#mcx-side-toggle").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.mcxSide = b.dataset.side;
+  $$("#mcx-side-toggle button").forEach(x => x.classList.toggle("on", x === b));
+  $$("#mcx-board .col").forEach(col => col.classList.toggle("show", col.dataset.side === state.mcxSide));
 });
 
 /* ================================================================ chart */
@@ -304,7 +354,9 @@ async function loadChart() {
 function renderChart(d) {
   const ui = ensureChart();
   $("#c-sym").innerHTML = `${esc(d.symbol)} <span class="px">${fmt(d.ltp)}</span> <span class="px ${cls(d.change_pct)}" style="font-size:15px">${pct(d.change_pct)}</span>`;
-  $("#c-sub").textContent = [d.name !== d.symbol ? d.name : null, d.sector, d.lot_size ? `Lot ${d.lot_size}` : null, ({ "5": "5-min", "15": "15-min", "60": "1-hour" }[d.tf] || "5-min") + " candles"].filter(Boolean).join(" · ");
+  const com = d.kind === "commodity";
+  $("#c-sub").textContent = [com ? "MCX" : null, d.name !== d.symbol ? d.name : null, d.sector, com ? d.contract : null,
+    d.lot_size ? (com ? `₹${d.lot_size} per ₹1 move per lot` : `Lot ${d.lot_size}`) : null, ({ "5": "5-min", "15": "15-min", "60": "1-hour" }[d.tf] || "5-min") + " candles"].filter(Boolean).join(" · ");
 
   const bars = d.candles.map(c => ({ time: c.time + IST, open: c.open, high: c.high, low: c.low, close: c.close }));
   ui.candles.setData(bars);
@@ -408,7 +460,7 @@ function renderZoneCard(d) {
     ${d.plan ? `<div class="zc">
       <h3><span>Paper trade (${d.plan.direction === "bull" ? "long" : "short"} ${esc(d.symbol)})</span></h3>
       <div class="kv"><span>Entry</span><b>${fmt(d.plan.entry)}</b><span>Stop</span><b class="down">${fmt(d.plan.stop)}</b><span>Target</span><b class="up">${fmt(d.plan.target)}</b>
-        <span>Qty</span><b><input class="qty" id="pt-qty" type="number" min="1" value="${(state.qty || {})[d.symbol] || d.lot_size || 1}"></b>
+        <span>${d.kind === "commodity" ? "Lots" : "Qty"}</span><b><input class="qty" id="pt-qty" type="number" min="1" value="${(state.qty || {})[d.symbol] || (d.kind === "commodity" ? 1 : d.lot_size || 1)}"></b>
         <span>Reward : risk</span><b class="${d.plan.rr >= 1.5 ? "up" : "down"}">${fmt(d.plan.rr, 1)}</b></div>
       ${d.plan.rr < 1 ? `<p class="note">Reward is smaller than the risk from here. Wait for price to pull back and build a zone.</p>` : `
       <div class="f-actions" style="margin-top:10px">
@@ -421,7 +473,7 @@ function renderZoneCard(d) {
     try {
       await api("/api/paper", { method: "POST", body: JSON.stringify({
         symbol: d.symbol, direction: d.plan.direction, u_entry: d.plan.entry, u_stop: d.plan.stop, u_target: d.plan.target,
-        qty: +$("#pt-qty").value || 1, order_type: orderType }) });
+        qty: (+$("#pt-qty").value || 1) * (d.kind === "commodity" ? (d.lot_size || 1) : 1), order_type: orderType }) });
       toast(orderType === "MARKET" ? "Paper trade opened" : "Limit order placed at the zone");
     } catch (e) { toast(e.message); }
   };
@@ -442,15 +494,24 @@ function renderZoneCard(d) {
 async function loadPicker() {
   if (!state.board) state.board = await api("/api/board?limit=250");
   if (!state.symbols.length) state.symbols = await api("/api/symbols");
+  if (!state.mcxSymbols) { try { state.mcxSymbols = await api("/api/symbols/mcx"); } catch (_) { state.mcxSymbols = []; } }
+  if (!state.mcx || Date.now() - (state.mcxAt || 0) > 60000) {
+    try { state.mcx = await api("/api/mcx"); state.mcxAt = Date.now(); } catch (_) {}
+  }
   const q = $("#sym-search").value.trim().toUpperCase();
   const item = (s, chg) => `<div class="pick" data-sym="${esc(s)}"><span>${esc(s)}</span><span class="${cls(chg)}">${chg == null ? "" : pct(chg)}</span></div>`;
   let html;
   if (q) {
-    html = state.symbols.filter(s => s.includes(q)).slice(0, 60).map(s => item(s)).join("") || `<div class="hint" style="padding:8px">No match</div>`;
+    html = [...state.symbols, ...state.mcxSymbols].filter(s => s.includes(q)).slice(0, 60).map(s => item(s)).join("") || `<div class="hint" style="padding:8px">No match</div>`;
   } else {
-    html = `<h3>Indices</h3>` + (state.board.indices || []).map(r => item(r.symbol, r.change_pct)).join("") +
+    const m = state.mcx;
+    const mcxList = m ? [...m.bullish, ...m.bearish, ...m.choppy] : [];
+    const mcxHtml = mcxList.length ? `<h3>MCX commodities</h3>` + mcxList.map(r => item(r.symbol, r.change_pct)).join("") : "";
+    const onMcx = mcxList.some(r => r.symbol === state.sym);
+    html = (onMcx ? mcxHtml : "") + `<h3>Indices</h3>` + (state.board.indices || []).map(r => item(r.symbol, r.change_pct)).join("") +
            `<h3>Top bullish</h3>` + state.board.bullish.slice(0, 10).map(r => item(r.symbol, r.change_pct)).join("") +
-           `<h3>Top bearish</h3>` + state.board.bearish.slice(0, 10).map(r => item(r.symbol, r.change_pct)).join("");
+           `<h3>Top bearish</h3>` + state.board.bearish.slice(0, 10).map(r => item(r.symbol, r.change_pct)).join("") +
+           (onMcx ? "" : mcxHtml);
   }
   $("#pick-list").innerHTML = html;
   $$("#pick-list .pick").forEach(p => p.classList.toggle("on", p.dataset.sym === state.sym));
@@ -636,7 +697,7 @@ async function loadOptions(d) {
       <span>PCR <b class="mono">${h.pcr ?? "—"}</b></span>
       <span>OI support <b class="mono up">${fmt(h.oi_support, h.oi_support % 1 ? 1 : 0)}</b></span>
       <span>OI resistance <b class="mono down">${fmt(h.oi_resistance, h.oi_resistance % 1 ? 1 : 0)}</b></span>
-      <span>Lot <b class="mono">${h.lot_size}</b></span>
+      <span>${d.kind === "commodity" ? "₹/pt per lot" : "Lot"} <b class="mono">${h.lot_size}</b></span>
       ${h.days_left != null ? `<span>${h.days_left} day${h.days_left === 1 ? "" : "s"} to expiry</span>` : ""}</div>`;
   const warn = (h.warnings || []).map(w => `<p class="opt-warn">${esc(w)}</p>`).join("");
   let table = "";
@@ -658,7 +719,7 @@ async function loadOptions(d) {
     </tbody></table></div>`;
   }
   box.innerHTML = `<div class="panel-h"><h2>Options helper ${h.side ? `<span class="tag ${h.side === "CE" ? "g" : "r"}">${h.side === "CE" ? "Calls (bullish)" : "Puts (bearish)"}</span>` : ""}</h2>${expSel}</div>${oiLine}${warn}${table}
-    <p class="muted small">★ = delta closest to 0.55, a common balance between cost and responsiveness. Estimates assume the move happens today; time decay and IV changes will shift real prices.</p>`;
+    ${d.kind === "commodity" ? `<p class="muted small">MCX options: premiums come from live quotes; IV and delta are worked out here from the future's price, because brokers' option-chain APIs don't cover MCX. OI change isn't available.</p>` : ""}<p class="muted small">★ = delta closest to 0.55, a common balance between cost and responsiveness. Estimates assume the move happens today; time decay and IV changes will shift real prices.</p>`;
   bindExp(d);
   $$("button[data-opt]", box).forEach(b => b.onclick = async () => {
     const c = h.candidates[+b.dataset.opt];
@@ -687,7 +748,7 @@ async function loadPaper() {
     tile("Closed trades", st.closed) +
     tile("Win rate", st.win_rate == null ? "—" : st.win_rate + "%") +
     tile("Profit factor", st.profit_factor == null ? "—" : fmt(st.profit_factor));
-  $("#p-eod").textContent = d.eod ? "Auto square-off at 15:20" : "No auto square-off";
+  $("#p-eod").textContent = d.eod ? "Auto square-off: NSE 15:20 · MCX 10 min before close" : "No auto square-off";
   const active = d.rows.filter(r => r.status === "OPEN" || r.status === "PENDING");
   const done = d.rows.filter(r => r.status === "CLOSED" || r.status === "CANCELLED");
   const sideTag = r => r.instrument === "OPTION" ? `<span class="tag">option</span>` : `<span class="${r.side === "LONG" ? "up" : "down"}">${r.side}</span>`;

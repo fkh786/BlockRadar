@@ -1,6 +1,6 @@
 # Guide 6: Install on Mac or Linux
 
-[← Back to README](../../README.md) · Previous: [Update, back up, uninstall](05-update-backup-uninstall.md)
+[← Back to README](../../README.md) · Previous: [Update, back up, uninstall](05-update-backup-uninstall.md) · Next: [MCX commodities →](07-mcx-commodities.md)
 
 `start.bat` is for Windows only. On Mac or Linux you run four commands once, then one command each day.
 

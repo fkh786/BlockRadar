@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import OrderedDict
 
 from .models import Candle, StockData, aggregate
+from .sessions import anchor as session_anchor
 
 SWING_LEFT = 3
 SWING_RIGHT = 3
@@ -313,9 +314,9 @@ HTF_SETTINGS = {"15m": (15, 3), "1h": (60, 2)}     # minutes per bar, swing size
 WORK_SESSIONS = 6                                  # 5-min sessions used for structure
 
 
-def htf_view(candles: list[Candle], ltp: float, minutes: int, swing: int):
+def htf_view(candles: list[Candle], ltp: float, minutes: int, swing: int, anchor=(9, 15)):
     """Order blocks and structure on a higher timeframe built from 5-min candles."""
-    bars = aggregate(candles, minutes)
+    bars = aggregate(candles, minutes, anchor)
     if len(bars) < 4 * swing + 6:
         return None
     a = atr(bars, 14)
@@ -433,7 +434,7 @@ def analyze(sd: StockData) -> dict | None:
     # ---- higher timeframes
     mtf = {}
     for label, (mins, swing) in HTF_SETTINGS.items():
-        mtf[label] = htf_view(all_candles, ltp, mins, swing)
+        mtf[label] = htf_view(all_candles, ltp, mins, swing, session_anchor(sd.kind))
     align = {k: _alignment(bias, v) for k, v in mtf.items()}
     mtf_mult = clamp(1 + sum(0.08 if x > 0 else -0.14 if x < 0 else 0 for x in align.values()), 0.7, 1.16)
 

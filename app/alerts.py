@@ -19,10 +19,15 @@ DEFAULTS = {
     "trap": True,             # fresh liquidity trap
     "top": False,             # stock entered the top 5 of its board
     "paper": True,            # paper-trading fills, stops, targets
+    "mcx": True,              # zone / trap alerts for MCX commodities
     "cooldown_min": 20,       # same stock + same alert type at most once per N minutes
     "telegram_token": "",
     "telegram_chat": "",
 }
+
+
+def tag(r: dict) -> str:
+    return "MCX " if r.get("kind") == "commodity" else ""
 
 
 class Alerts:
@@ -79,16 +84,18 @@ class Alerts:
         for sym, r in results.items():
             p = self.prev.get(sym)
             eligible = r.get("kind") == "index" or r["score"] >= cfg["min_score"]
+            if r.get("kind") == "commodity" and not cfg.get("mcx", True):
+                eligible = False
             if p and eligible and not first_pass:
                 arrow = 1 if r["bias"] == "bullish" else -1 if r["bias"] == "bearish" else 0
                 if cfg["zone"] and r["in_zone"] and not p["in_zone"] and r["zone"]:
                     z = r["zone"]
                     extra = f" · {'+'.join(r['htf_confluence'])} zone confluence" if r.get("htf_confluence") else ""
-                    self.add(sym, "zone", f"{sym} entered its {'bullish' if arrow > 0 else 'bearish'} order block",
+                    self.add(sym, "zone", f"{tag(r)}{sym} entered its {'bullish' if arrow > 0 else 'bearish'} order block",
                              f"Price {r['ltp']} inside {z['bottom']}–{z['top']} · strength {r['score']}{extra}", arrow)
                 trap = r.get("trap")
                 if cfg["trap"] and trap and (not p["trap_t"] or p["trap_t"] != trap["t"]):
-                    self.add(sym, "trap", f"{sym}: liquidity trap ({'bullish' if trap['dir'] > 0 else 'bearish'})",
+                    self.add(sym, "trap", f"{tag(r)}{sym}: liquidity trap ({'bullish' if trap['dir'] > 0 else 'bearish'})",
                              f"{trap['text']} · price {r['ltp']} · strength {r['score']}", trap["dir"])
             self.prev[sym] = {"in_zone": r["in_zone"], "trap_t": (r.get("trap") or {}).get("t")}
 

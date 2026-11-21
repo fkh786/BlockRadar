@@ -46,10 +46,10 @@ def demo_expiries(weekly: bool, today: date | None = None, n: int = 4) -> list[s
     return out
 
 
-def years_to_expiry(expiry: str, now: datetime | None = None) -> float:
+def years_to_expiry(expiry: str, now: datetime | None = None, close=(15, 30)) -> float:
     now = now or now_ist()
     e = date.fromisoformat(expiry)
-    exp_dt = datetime(e.year, e.month, e.day, 15, 30, tzinfo=IST)
+    exp_dt = datetime(e.year, e.month, e.day, close[0], close[1], tzinfo=IST)
     secs = (exp_dt - now).total_seconds()
     return max(secs, 600) / (365 * 24 * 3600)
 
@@ -80,6 +80,43 @@ def bs(S: float, K: float, T: float, iv: float, cp: str, r: float = RISK_FREE) -
     gamma = _npdf(d1) / (S * sq)
     vega = S * _npdf(d1) * math.sqrt(T) / 100
     return {"price": max(price, 0.05), "delta": delta, "gamma": gamma, "theta": theta, "vega": vega, "iv": iv * 100}
+
+
+def implied_vol(price: float, S: float, K: float, T: float, cp: str, r: float = RISK_FREE) -> float | None:
+    """Solve Black-Scholes for IV (as a fraction) by bisection; None if no solution."""
+    if not price or price <= 0 or S <= 0 or K <= 0:
+        return None
+    intrinsic = max(0.0, S - K) if cp == "CE" else max(0.0, K - S)
+    if price < intrinsic * 0.999:
+        return None
+    lo, hi = 0.01, 3.0
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if bs(S, K, T, mid, cp, r)["price"] > price:
+            hi = mid
+        else:
+            lo = mid
+    return (lo + hi) / 2
+
+
+def fill_greeks(chain: dict, r: float = RISK_FREE, close=(15, 30)) -> dict:
+    """Add IV / delta / gamma / theta from Black-Scholes where the broker gives none.
+    For options on futures (MCX) call with r=0 (Black-76 with the future as the underlying)."""
+    S = chain.get("spot") or 0
+    if not S or not chain.get("expiry"):
+        return chain
+    T = years_to_expiry(chain["expiry"], close=close)
+    for row in chain.get("rows", []):
+        for cp in ("CE", "PE"):
+            o = row.get(cp)
+            if not o or o.get("delta") not in (None, 0):
+                continue
+            iv = implied_vol(o.get("ltp") or 0, S, row["strike"], T, cp, r)
+            if iv is None:
+                continue
+            g = bs(S, row["strike"], T, iv, cp, r)
+            o.update(iv=round(iv * 100, 2), delta=round(g["delta"], 4), gamma=g["gamma"], theta=round(g["theta"], 3))
+    return chain
 
 
 # ------------------------------------------------------------------ plan translation
@@ -202,39 +239,3 @@ def build_helper(r: dict, chain: dict, lot_size: int) -> dict:
     if not plan["from_zone"]:
         out["warnings"].append("No order-block zone: the plan uses the current price and nearest support/resistance.")
     return out
-
-
-def implied_vol(price: float, S: float, K: float, T: float, cp: str) -> float | None:
-    """Solve Black-Scholes for IV (as a fraction) by bisection; None if no solution."""
-    if not price or price <= 0 or S <= 0 or K <= 0:
-        return None
-    intrinsic = max(0.0, S - K) if cp == "CE" else max(0.0, K - S)
-    if price < intrinsic * 0.999:
-        return None
-    lo, hi = 0.01, 3.0
-    for _ in range(60):
-        mid = (lo + hi) / 2
-        if bs(S, K, T, mid, cp)["price"] > price:
-            hi = mid
-        else:
-            lo = mid
-    return (lo + hi) / 2
-
-
-def fill_greeks(chain: dict) -> dict:
-    """Add IV / delta / gamma / theta from Black-Scholes where the broker gives none."""
-    S = chain.get("spot") or 0
-    if not S or not chain.get("expiry"):
-        return chain
-    T = years_to_expiry(chain["expiry"])
-    for row in chain.get("rows", []):
-        for cp in ("CE", "PE"):
-            o = row.get(cp)
-            if not o or o.get("delta") not in (None, 0):
-                continue
-            iv = implied_vol(o.get("ltp") or 0, S, row["strike"], T, cp)
-            if iv is None:
-                continue
-            g = bs(S, row["strike"], T, iv, cp)
-            o.update(iv=round(iv * 100, 2), delta=round(g["delta"], 4), gamma=g["gamma"], theta=round(g["theta"], 3))
-    return chain

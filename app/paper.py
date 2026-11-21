@@ -130,16 +130,18 @@ class PaperBook:
             c.execute("DELETE FROM paper WHERE id=? AND status IN ('CLOSED','CANCELLED')", (tid,))
 
     # ------------------------------------------------------------------ engine
-    def update(self, u_price, opt_price, clock: str, market_open: bool, eod: bool = True) -> list[dict]:
+    def update(self, u_price, opt_price, clock: str, is_open, eod_at, eod: bool = True) -> list[dict]:
         """
-        u_price(symbol) -> underlying LTP; opt_price(key) -> option premium.
+        u_price(symbol) -> underlying LTP; opt_price(key) -> option premium;
+        is_open(symbol) -> is that symbol's exchange trading now (NSE or MCX);
+        eod_at(symbol) -> "HH:MM" square-off time for that symbol.
         Returns events: {"row", "event"} with event in FILLED / TARGET / STOP / EOD / CANCELLED.
         """
         events = []
-        if not market_open:
-            return events
-        square_off = eod and clock >= "15:20"
         for r in self.active():
+            if not is_open(r["symbol"]):
+                continue
+            square_off = eod and clock >= eod_at(r["symbol"])
             u = u_price(r["symbol"])
             if u is None:
                 continue

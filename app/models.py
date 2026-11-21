@@ -28,7 +28,7 @@ class StockData:
     symbol: str
     name: str = ""
     sector: str = "Other"
-    kind: str = "stock"      # "stock" or "index"
+    kind: str = "stock"      # "stock", "index" or "commodity"
     candles: list[Candle] = field(default_factory=list)  # 5-min, oldest first, several days
     ltp: float = 0.0
     prev_close: float = 0.0
@@ -43,19 +43,20 @@ def now_ist() -> datetime:
     return datetime.now(IST)
 
 
-def session_open_ts(d) -> int:
-    return int(datetime(d.year, d.month, d.day, 9, 15, tzinfo=IST).timestamp())
+def session_open_ts(d, anchor=(9, 15)) -> int:
+    return int(datetime(d.year, d.month, d.day, anchor[0], anchor[1], tzinfo=IST).timestamp())
 
 
-def aggregate(candles: list[Candle], minutes: int) -> list[Candle]:
-    """Combine 5-min candles into N-minute candles anchored at 09:15 each session."""
+def aggregate(candles: list[Candle], minutes: int, anchor=(9, 15)) -> list[Candle]:
+    """Combine 5-min candles into N-minute candles anchored at the session open
+    (09:15 for NSE, 09:00 for MCX)."""
     if minutes <= 5:
         return candles
     out: list[Candle] = []
     key = None
     for c in candles:
         d = c.day
-        t0 = session_open_ts(d)
+        t0 = session_open_ts(d, anchor)
         bucket = (c.t - t0) // (minutes * 60)
         k = (d, bucket)
         if k != key:

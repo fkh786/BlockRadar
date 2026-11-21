@@ -16,6 +16,7 @@
   </a>
   <nav class="tabs" id="tabs">
     <a href="#board" data-view="board">Board</a>
+    <a href="#mcx" data-view="mcx">MCX</a>
     <a href="#chart" data-view="chart">Charts</a>
     <a href="#xray" data-view="xray">X-Ray</a>
     <a href="#paper" data-view="paper">Paper</a>
@@ -63,6 +64,49 @@
         <ol class="rows" id="rows-bearish"></ol>
       </div>
     </div>
+  </section>
+
+  <!-- ============ MCX COMMODITIES ============ -->
+  <section class="view" id="view-mcx" hidden>
+    <div class="mcx-head">
+      <div>
+        <h1>MCX commodities</h1>
+        <div class="sub" id="mcx-session"></div>
+      </div>
+      <div class="board-tools">
+        <div class="seg" id="mcx-group">
+          <button data-g="" class="on">All</button>
+          <button data-g="Energy">Energy</button>
+          <button data-g="Bullion">Bullion</button>
+          <button data-g="Base Metals">Base metals</button>
+        </div>
+        <div class="seg" id="mcx-size">
+          <button data-s="all" class="on">All contracts</button>
+          <button data-s="main">Main only</button>
+        </div>
+      </div>
+    </div>
+    <div class="board-head">
+      <div class="counts" id="mcx-counts"></div>
+      <div class="seg mobile-only" id="mcx-side-toggle">
+        <button data-side="bullish" class="on">Bullish</button>
+        <button data-side="bearish">Bearish</button>
+      </div>
+    </div>
+    <div class="board" id="mcx-board">
+      <div class="col bull show" data-side="bullish">
+        <h2><span class="tri up"></span>Bullish commodities</h2>
+        <ol class="rows" id="mcx-bullish"></ol>
+      </div>
+      <div class="col bear" data-side="bearish">
+        <h2><span class="tri down"></span>Bearish commodities</h2>
+        <ol class="rows" id="mcx-bearish"></ol>
+      </div>
+    </div>
+    <h2 class="mcx-sub-h">No clear setup right now <span class="muted">(choppy — click any to see its chart)</span></h2>
+    <div class="mcx-chop" id="mcx-choppy"></div>
+    <p class="muted small mcx-foot">Prices are the near-month MCX future (rolled to the next month 3 days before expiry). Mini and micro contracts track the same commodity at a smaller size.
+      <b>₹/pt</b> = profit or loss for a ₹1 move on one lot. MCX trades 09:00–23:30 IST (23:55 when the US is on summer time).</p>
   </section>
 
   <!-- ============ CHART ============ -->
@@ -189,6 +233,7 @@
           <label><input type="checkbox" name="trap"> Liquidity trap fires</label>
           <label><input type="checkbox" name="top"> Stock enters the top 5</label>
           <label><input type="checkbox" name="paper"> Paper trade fills / stop / target</label>
+          <label><input type="checkbox" name="mcx"> MCX commodities: zone and trap alerts</label>
         </div>
         <div class="f-row">
           <label>Minimum strength<input type="number" name="min_score" min="0" max="100"></label>
@@ -205,7 +250,7 @@
           <p class="muted small">Create a bot with @BotFather, send it any message, then get your chat ID from @userinfobot. <span id="tg-status"></span></p>
         </details>
         <div class="checks">
-          <label><input type="checkbox" name="paper_eod"> Square off paper trades at 15:20</label>
+          <label><input type="checkbox" name="paper_eod"> Square off paper trades before the close (NSE 15:20 · MCX 10 min before close)</label>
         </div>
         <div class="f-actions"><button class="btn primary" type="submit">Save alert settings</button></div>
       </form>

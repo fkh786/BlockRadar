@@ -60,6 +60,8 @@ For options, the **Options helper** shows **Risk/lot**. Make sure one lot's risk
 
 ## After the close (after 15:30)
 
+The **MCX** tab keeps updating until 23:30 (23:55 in US summer time) if you trade commodities. See [Guide 7](07-mcx-commodities.md).
+
 1. Open **Paper** and look at today's results.
 2. Log any **real** trades in the **Journal**, with the setup type and a note on why you took it.
 3. Once a week, check **Journal → By setup** and **Paper → Equity curve**. Keep the setups that make money and drop the ones that don't.

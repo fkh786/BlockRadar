@@ -2,7 +2,7 @@
 
 [← Back to README](../../README.md) · Previous: [Daily routine](03-daily-routine.md) · Next: [Update, back up, uninstall →](05-update-backup-uninstall.md)
 
-**Screens:** [Board](#board) · [Charts](#charts) · [Options helper](#options-helper) · [Paper](#paper) · [Alerts](#alerts) · [X-Ray](#x-ray) · [Journal](#journal) · [Settings](#settings)
+**Screens:** [Board](#board) · [MCX](07-mcx-commodities.md) · [Charts](#charts) · [Options helper](#options-helper) · [Paper](#paper) · [Alerts](#alerts) · [X-Ray](#x-ray) · [Journal](#journal) · [Settings](#settings)
 
 The **status** at the top right shows the data source, the market time and when the data was last updated (every minute with a broker, every few seconds in demo mode).
 
@@ -76,7 +76,8 @@ The option prices are estimates; real prices also change with time decay and vol
 - **Closed:** each trade's fill, exit, P&L and exit reason (`TARGET`, `STOP`, `EOD`, `MANUAL`).
 - **Equity curve:** your running realised P&L.
 - Stops and targets trigger on the **stock or index price**. Option trades exit at the option's price at that moment.
-- Open trades are squared off at **15:20** (you can turn this off in Settings).
+- Open trades are squared off at **15:20** for stocks and 10 minutes before the MCX close for commodities (you can turn this off in Settings).
+- For **MCX commodities**, the box asks for **Lots**. See [Guide 7](07-mcx-commodities.md).
 
 ---
 
@@ -85,7 +86,7 @@ The option prices are estimates; real prices also change with time decay and vol
 Click the 🔔 bell (top right) to see recent alerts. Click an alert to open that chart.
 
 **Turn them on:** **Settings → Alerts**
-1. Choose what to be told about: *price enters a trade zone*, *liquidity trap*, *stock enters the top 5*, *paper trade fills/stops/targets*.
+1. Choose what to be told about: *price enters a trade zone*, *liquidity trap*, *stock enters the top 5*, *paper trade fills/stops/targets*, *MCX commodities* (zone and trap alerts, marked "MCX").
 2. **Minimum strength:** only alert for stocks at least this strong (default 60).
 3. **Repeat gap:** don't repeat the same alert for the same stock within N minutes.
 4. Tick **Play a sound** and **Desktop pop-up**. Your browser asks for permission; click **Allow**.
@@ -123,4 +124,4 @@ For your **real** trades.
 
 - **Data source:** choose and connect your broker, or Demo. See [Guide 2](02-connect-broker.md).
 - **Alerts:** see [Alerts](#alerts) above.
-- **Square off paper trades at 15:20:** on or off.
+- **Square off paper trades before the close:** on or off (NSE 15:20, MCX 10 minutes before its close).

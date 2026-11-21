@@ -28,6 +28,13 @@ class Provider:
     async def stop(self):
         pass
 
+    def is_open(self, kind: str) -> bool:
+        """Is the exchange for this kind of instrument trading right now?"""
+        m = self.market()
+        if kind == "commodity":
+            return bool((m.get("mcx") or {}).get("open"))
+        return bool(m.get("open"))
+
     def market(self) -> dict:
         """{'open': bool, 'clock': 'HH:MM', 'session': 'YYYY-MM-DD', 'label': str}"""
         return {"open": False, "clock": "", "session": "", "label": ""}

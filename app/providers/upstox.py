@@ -4,6 +4,8 @@ Live data from Upstox (API v2/v3).
 How it stays inside Upstox's limits (50/s, 500/min, 2000 per 30 min):
   * start-up: ~3 calls per stock (5-min history, today's 5-min candles,
     futures OI) - about 650 calls, paced at ~8 per second.
+  * MCX commodities (near-month futures) are loaded the same way; outside NSE hours
+    only the MCX instruments are quoted and refreshed.
   * every minute: one or two "full quote" calls for all stocks + futures,
     which update the live 5-min candle, LTP, day volume and OI;
     plus a fresh candle download for ~10 stocks (top-ranked first, then
@@ -22,12 +24,16 @@ from urllib.parse import quote
 
 import httpx
 
+from .. import sessions
 from ..models import BAR_SECONDS, IST, Candle, StockData, now_ist
-from ..universe import INDICES, sector_of
+from ..options import fill_greeks
+from ..universe import INDICES, MCX, MCX_ROLL_DAYS, sector_of
 from .base import Provider
 
 API = "https://api.upstox.com"
 INSTRUMENTS_URL = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
+MCX_INSTRUMENTS_URL = "https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz"
+MCX_CHAIN_STRIKES = 12     # strikes either side of the future price in the MCX option helper
 HISTORY_DAYS = 20          # calendar days of 5-min history to load (1-hour view needs ~10 sessions)
 KEEP_SESSIONS = 10         # sessions kept in memory (9 prior + today)
 ROTATE_PER_CYCLE = 10      # candle re-downloads per minute
@@ -62,11 +68,18 @@ class RateLimiter:
 
 
 def market_open_now() -> bool:
-    n = now_ist()
-    if n.weekday() >= 5:
-        return False
-    mins = n.hour * 60 + n.minute
-    return 9 * 60 + 15 <= mins < 15 * 60 + 30
+    """NSE cash/F&O session."""
+    return sessions.nse_open()
+
+
+def _mcx_symbol(x: dict) -> str | None:
+    """Which of our MCX commodities an instrument row belongs to."""
+    for v in (x.get("underlying_symbol"), x.get("asset_symbol"), x.get("name"),
+              (x.get("trading_symbol") or "").split(" ")[0]):
+        v = (v or "").replace(" ", "").upper()
+        if v in MCX:
+            return v
+    return None
 
 
 def _parse_candles(rows) -> list[Candle]:
@@ -99,6 +112,9 @@ class UpstoxProvider(Provider):
         self.extra_ltp: dict[str, float] = {}       # option premiums for watched keys
         self._chain_cache: dict[tuple, tuple] = {}
         self.needs_login = not token
+        self.loaded_at = 0.0                        # epoch seconds of the last full load
+        self.mcx_opts: dict[str, dict[str, list]] = {}   # symbol -> expiry -> [(strike, CE/PE, key, underlying key)]
+        self.mcx_error = ""
 
     # ------------------------------------------------------------- http
     async def _get(self, path: str, params: dict | None = None, retry=True):
@@ -127,16 +143,57 @@ class UpstoxProvider(Provider):
         return _parse_candles((js.get("data") or {}).get("candles"))
 
     # ------------------------------------------------------------- universe
-    async def _load_instruments(self) -> list[dict]:
-        cache = self.data_dir / f"instruments_{date.today():%Y%m%d}.json.gz"
+    async def _load_instruments(self, exchange: str = "NSE") -> list[dict]:
+        url = MCX_INSTRUMENTS_URL if exchange == "MCX" else INSTRUMENTS_URL
+        prefix = "instruments_mcx_" if exchange == "MCX" else "instruments_"
+        cache = self.data_dir / f"{prefix}{date.today():%Y%m%d}.json.gz"
         if not cache.exists():
-            self.message = "Downloading Upstox instrument list…"
-            r = await self.client.get(INSTRUMENTS_URL, follow_redirects=True, timeout=120)
+            self.message = f"Downloading Upstox {exchange} instrument list…"
+            r = await self.client.get(url, follow_redirects=True, timeout=120)
             r.raise_for_status()
-            for old in self.data_dir.glob("instruments_*.json.gz"):
+            for old in self.data_dir.glob(f"{prefix}*.json.gz"):
+                if exchange == "NSE" and old.name.startswith("instruments_mcx_"):
+                    continue
                 old.unlink(missing_ok=True)
             cache.write_bytes(r.content)
         return json.loads(gzip.decompress(cache.read_bytes()))
+
+    def _build_mcx(self, rows: list[dict]):
+        """Add MCX commodity futures (near month, rolled MCX_ROLL_DAYS before expiry)."""
+        today = now_ist().date()
+        futs: dict[str, list] = {}
+        opts: dict[str, dict[str, list]] = {}
+        for x in rows:
+            if x.get("segment") != "MCX_FO":
+                continue
+            sym = _mcx_symbol(x)
+            exp = x.get("expiry") or 0
+            if not sym or not exp:
+                continue
+            exp_d = datetime.fromtimestamp(exp / 1000, IST).date()
+            if exp_d < today:
+                continue
+            itype = x.get("instrument_type")
+            if itype == "FUT":
+                futs.setdefault(sym, []).append((exp_d, x))
+            elif itype in ("CE", "PE") and x.get("strike_price") is not None:
+                opts.setdefault(sym, {}).setdefault(exp_d.isoformat(), []).append(
+                    (float(x["strike_price"]), itype, x["instrument_key"], x.get("underlying_key") or ""))
+        self.mcx_opts = opts
+        roll_cut = today + timedelta(days=MCX_ROLL_DAYS)
+        for sym, lst in futs.items():
+            lst.sort(key=lambda t: t[0])
+            exp_d, x = next((t for t in lst if t[0] >= roll_cut), lst[0])
+            group, point_value, _, label = MCX[sym]
+            self.meta[sym] = {
+                "expiry": x.get("expiry"), "fut_key": x["instrument_key"], "eq_key": x["instrument_key"],
+                "lot_size": point_value, "kind": "commodity",
+                "expiries": sorted(opts.get(sym, {})),
+                "contract": x.get("trading_symbol") or f"{sym} FUT", "fut_expiry": exp_d.isoformat(),
+                "exchange_lot": x.get("lot_size"),
+            }
+            self.stocks[sym] = StockData(symbol=sym, name=label, sector=group, kind="commodity",
+                                         lot_size=point_value)
 
     def _build_universe(self, rows: list[dict]):
         now_ms = time.time() * 1000
@@ -193,9 +250,21 @@ class UpstoxProvider(Provider):
             return
         rows = await self._load_instruments()
         self._build_universe(rows)
+        del rows
+        try:
+            self._build_mcx(await self._load_instruments("MCX"))
+            self.mcx_error = "" if any(m["kind"] == "commodity" for m in self.meta.values()) \
+                else "No MCX commodity futures found in the Upstox instrument list"
+        except LoginRequired:
+            raise
+        except Exception as e:                       # MCX trouble must never stop the NSE board
+            self.mcx_error = f"MCX list failed: {e}"
+            print(f"[upstox] {self.mcx_error}")
+        self.loaded_at = time.time()
         syms = sorted(self.stocks)
         self.progress = [0, len(syms)]
-        self.message = f"Loading candles for {len(syms)} F&O stocks…"
+        n_com = sum(1 for m in self.meta.values() if m["kind"] == "commodity")
+        self.message = f"Loading candles for {len(syms) - n_com} F&O stocks + {n_com} MCX commodities…"
 
         today = now_ist().date()
         hist_to = today - timedelta(days=1)
@@ -215,7 +284,7 @@ class UpstoxProvider(Provider):
                 self.progress[0] += 1
 
         await asyncio.gather(*(load(s) for s in syms))
-        days = [c.day for sd in self.stocks.values() for c in sd.candles[-1:]]
+        days = [c.day for sd in self.stocks.values() if sd.kind != "commodity" for c in sd.candles[-1:]]
         self.session_day = max(days) if days else today
         try:
             await self._quotes()
@@ -258,11 +327,19 @@ class UpstoxProvider(Provider):
         sd.updated = time.time()
 
     # ------------------------------------------------------------- live updates
-    async def _quotes(self):
-        keys = []
+    async def _quotes(self, kinds: set | None = None):
+        """Full quotes for every instrument whose exchange is in `kinds` (None = all)."""
+        keys, seen = [], set()
         for m in self.meta.values():
-            keys += [m["eq_key"], m["fut_key"]]
-        keys += sorted(k for k in self.watch_keys if k not in keys)
+            if kinds is not None and ("commodity" if m["kind"] == "commodity" else "nse") not in kinds:
+                continue
+            for k in (m["eq_key"], m["fut_key"]):
+                if k not in seen:
+                    seen.add(k)
+                    keys.append(k)
+        keys += sorted(k for k in self.watch_keys if k not in seen)
+        if not keys:
+            return
         by_key = {}
         for i in range(0, len(keys), 250):
             js = await self._get("/v2/market-quote/quotes", {"instrument_key": ",".join(keys[i:i + 250])})
@@ -271,18 +348,21 @@ class UpstoxProvider(Provider):
                 if tok:
                     by_key[tok] = v
         now = time.time()
-        live = market_open_now()
+        live = {"stock": sessions.nse_open(), "commodity": sessions.mcx_open()}
+        live["index"] = live["stock"]
         bucket = int(now // BAR_SECONDS * BAR_SECONDS)
         for sym, m in self.meta.items():
             sd = self.stocks[sym]
             q = by_key.get(m["eq_key"])
+            if q is None:
+                continue
             if q and q.get("last_price"):
                 ltp = float(q["last_price"])
                 sd.ltp = ltp
                 if q.get("net_change") is not None:
                     sd.prev_close = round(ltp - float(q["net_change"]), 2)
                 sd.day_volume = float(q.get("volume") or sd.day_volume)
-                if live and sd.candles:
+                if live.get(sd.kind) and sd.candles:
                     self._update_forming(sd, bucket, ltp)
             fq = by_key.get(m["fut_key"])
             if fq and fq.get("oi"):
@@ -311,16 +391,24 @@ class UpstoxProvider(Provider):
     async def refresh(self):
         if not self.token or self.needs_login:
             return
-        if self.session_day and market_open_now() and self.session_day < now_ist().date():
-            await self.start()             # first refresh of a new trading day: full reload
+        n = now_ist()
+        nse, mcx = sessions.nse_open(n), sessions.mcx_open(n)
+        if not (nse or mcx):
             return
-        if not market_open_now():
+        # first refresh after 09:15 on a new trading day: full reload (MCX runs on live
+        # quotes between 09:00 and 09:15, then gets reloaded with everything else)
+        reload_at = datetime(n.year, n.month, n.day, 9, 15, tzinfo=IST).timestamp()
+        if nse and self.loaded_at and self.loaded_at < reload_at:
+            await self.start()
             return
-        await self._quotes()
-        # re-download real candles for a few stocks: top-ranked first, then round-robin
+        kinds = ({"nse"} if nse else set()) | ({"commodity"} if mcx else set())
+        await self._quotes(kinds)
+        # re-download real candles for a few instruments whose exchange is open:
+        # top-ranked first, then round-robin
         now = time.time()
-        picks = [s for s in self.priority if now - self._last_full.get(s, 0) > 300][:ROTATE_PER_CYCLE // 2]
-        syms = sorted(self.meta)
+        open_syms = {s for s, m in self.meta.items() if (mcx if m["kind"] == "commodity" else nse)}
+        picks = [s for s in self.priority if s in open_syms and now - self._last_full.get(s, 0) > 300][:ROTATE_PER_CYCLE // 2]
+        syms = sorted(open_syms)
         while len(picks) < min(ROTATE_PER_CYCLE, len(syms)):
             s = syms[self._rotate_pos % len(syms)]
             self._rotate_pos += 1
@@ -357,6 +445,10 @@ class UpstoxProvider(Provider):
             return hit[1]
         if self.client is None:
             self.client = httpx.AsyncClient(timeout=30)
+        if m["kind"] == "commodity":
+            chain = await self._mcx_chain(symbol, expiry)
+            self._chain_cache[ck] = (time.time(), chain)
+            return chain
         js = await self._get("/v2/option/chain", {"instrument_key": m["eq_key"], "expiry_date": expiry})
         rows, spot = [], 0.0
         for x in js.get("data") or []:
@@ -379,8 +471,44 @@ class UpstoxProvider(Provider):
         self._chain_cache[ck] = (time.time(), chain)
         return chain
 
+    async def _mcx_chain(self, symbol: str, expiry: str) -> dict:
+        """Upstox's option-chain API covers NSE/BSE only, so for MCX the chain is built from the
+        instrument list + one quote call; IV and Greeks come from Black-76 on the future price."""
+        contracts = (self.mcx_opts.get(symbol) or {}).get(expiry) or []
+        sd = self.stocks[symbol]
+        if not contracts:
+            return {"expiry": expiry, "spot": sd.ltp, "rows": []}
+        ukeys = {}
+        for c in contracts:
+            ukeys[c[3]] = ukeys.get(c[3], 0) + 1
+        ukey = max(ukeys, key=ukeys.get) if ukeys else ""
+        centre = sd.ltp
+        strikes = sorted({c[0] for c in contracts}, key=lambda k: abs(k - centre))[:2 * MCX_CHAIN_STRIKES + 1]
+        wanted = [c for c in contracts if c[0] in set(strikes)]
+        keys = [c[2] for c in wanted] + ([ukey] if ukey and ukey != self.meta[symbol]["fut_key"] else [])
+        js = await self._get("/v2/market-quote/quotes", {"instrument_key": ",".join(keys)})
+        by_key = {v.get("instrument_token"): v for v in (js.get("data") or {}).values() if v.get("instrument_token")}
+        spot = sd.ltp
+        if ukey and ukey in by_key and by_key[ukey].get("last_price"):
+            spot = float(by_key[ukey]["last_price"])     # the future this option expiry settles on
+        rows: dict[float, dict] = {}
+        for strike, cp, key, _ in wanted:
+            q = by_key.get(key) or {}
+            ltp = float(q.get("last_price") or 0)
+            rows.setdefault(strike, {"strike": strike})[cp] = {
+                "key": key, "ltp": ltp, "oi": float(q.get("oi") or 0), "prev_oi": 0,
+                "volume": float(q.get("volume") or 0), "iv": 0, "delta": None, "gamma": None, "theta": 0,
+            }
+            if ltp:
+                self.extra_ltp[key] = ltp
+        chain = {"expiry": expiry, "spot": spot, "rows": sorted(rows.values(), key=lambda r: r["strike"])}
+        return fill_greeks(chain, r=0.0, close=sessions.mcx_close(date.fromisoformat(expiry)))
+
     def option_price(self, key: str) -> float | None:
         return self.extra_ltp.get(key)
+
+    def is_open(self, kind: str) -> bool:
+        return sessions.is_open(kind)
 
     async def stop(self):
         if self.client:
@@ -396,7 +524,16 @@ class UpstoxProvider(Provider):
             "session": self.session_day.isoformat() if self.session_day else "",
             "label": "Market open" if open_ else "Market closed - showing last session",
             "api_calls_30m": self.limiter.used(1800),
+            "mcx": self.mcx_market(),
         }
+
+    def mcx_market(self) -> dict:
+        n = now_ist()
+        open_ = sessions.mcx_open(n)
+        h, mm = sessions.mcx_close(n.date())
+        return {"open": open_, "hours": sessions.hours_label(n.date()), "close": f"{h:02d}:{mm:02d}",
+                "label": "MCX open" if open_ else "MCX closed - showing last session",
+                "error": self.mcx_error}
 
 
 # ----------------------------------------------------------------- auth helpers
